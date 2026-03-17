@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.sisyphus
+.opencode
+.pytest_cache
+.coverage

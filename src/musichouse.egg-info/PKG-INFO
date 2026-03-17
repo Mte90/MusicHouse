@@ -1,0 +1,56 @@
+Metadata-Version: 2.4
+Name: musichouse
+Version: 0.0.0
+Summary: MP3 metadata fixer and AI artist suggestions tool
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: PyQt6>=6.5.0
+Requires-Dist: eyed3>=0.9.0
+Provides-Extra: test
+Requires-Dist: pytest>=7.0.0; extra == "test"
+Requires-Dist: pytest-qt>=4.2.0; extra == "test"
+Requires-Dist: pytest-cov>=4.0.0; extra == "test"
+
+# musichouse
+
+MP3 metadata fixer and AI artist suggestions tool.
+
+## Features
+
+- Scan MP3 files recursively in a directory
+- Fix missing ID3 tags using filename pattern "artist - title"
+- Artist inference from parent folder name
+- AI suggestions for similar artists (OpenAI-compatible API)
+- Artist leaderboard with caching
+
+## Requirements
+
+- Python 3.10+
+- PyQt6
+- eyed3
+
+## Installation
+
+```bash
+pip3.12 install -e .
+```
+
+## Usage
+
+From the project directory:
+
+```bash
+cd /home/mte90/Desktop/Prog/MusicHouse
+python3.12 main.py
+```
+
+The configuration (API endpoint, model, key) is set via the Settings dialog in the app.
+
+The scan directory selection remembers the last used directory.
+
+## Development
+
+```bash
+pip3.12 install pytest pytest-qt
+pytest3.12 -v
+```
