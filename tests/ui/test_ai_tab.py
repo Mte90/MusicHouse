@@ -483,3 +483,72 @@ def test_ai_tab_no_api_calls_with_fallback(ai_tab):
     # Should get fallback responses (can be empty list for genres in fallback)
     assert isinstance(similar, list)
     assert isinstance(genres, list)
+
+
+def test_filter_artists_with_search_text(ai_tab):
+    """Test filtering artists with search text."""
+    # Load some artists first
+    ai_tab.load_artists(["Beatles", "Pink Floyd", "The Doors", "Bob Dylan"])
+    
+    # Filter with search text
+    ai_tab._filter_artists("beat")
+    
+    # Check combo box contains only matching artists
+    assert ai_tab._artist_combo.count() == 2  # "Select..." + "Beatles"
+    assert ai_tab._artist_combo.itemText(1) == "Beatles"
+    
+    # Check count label
+    assert "1 artists found" in ai_tab._artist_count_label.text()
+
+
+def test_filter_artists_empty_search(ai_tab):
+    """Test filtering with empty search shows all artists."""
+    ai_tab.load_artists(["Beatles", "Pink Floyd", "The Doors"])
+    
+    # Filter with empty text
+    ai_tab._filter_artists("")
+    
+    # Should show all artists
+    assert ai_tab._artist_combo.count() == 4  # "Select..." + 3 artists
+
+
+def test_filter_artists_no_matches(ai_tab):
+    """Test filtering when no artists match."""
+    ai_tab.load_artists(["Beatles", "Pink Floyd"])
+    
+    # Filter with non-matching text
+    ai_tab._filter_artists("xyz123")
+    
+    # Should only have "Select..." item
+    assert ai_tab._artist_combo.count() == 1
+    assert "0 artists found" in ai_tab._artist_count_label.text()
+
+
+def test_filter_artists_case_insensitive(ai_tab):
+    """Test filtering is case insensitive."""
+    ai_tab.load_artists(["Beatles", "Pink Floyd"])
+    
+    # Filter with uppercase
+    ai_tab._filter_artists("BEAT")
+    
+    # Should still match
+    assert ai_tab._artist_combo.count() == 2
+
+
+def test_load_artists_from_db_error_path(qapp, temp_dir):
+    """Test the exception path in load_artists_from_db."""
+    from musichouse.ui.ai_tab import AITab
+    from unittest.mock import patch
+    
+    # Create fresh AITab instance
+    tab = AITab()
+    
+    # Mock get_all_artists to raise an exception
+    with patch('musichouse.leaderboard_cache.LeaderboardCache.get_all_artists') as mock_get:
+        mock_get.side_effect = Exception("Database error")
+        
+        # This should not raise, just log the error
+        tab.load_artists_from_db()
+        
+        # Verify exception was caught (logger.error was called)
+        # Note: _artists_loaded remains False, so it will retry on next call

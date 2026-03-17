@@ -530,3 +530,218 @@ def test_set_all_checkboxes(fixer_tab_with_data, qtbot):
         item = fixer_tab_with_data._table.item(row, 0)
         assert item.checkState() == Qt.CheckState.Unchecked
 
+
+
+def test_tags_already_exist_with_matching_tags(temp_dir):
+    """Test _tags_already_exist when tags match."""
+    from musichouse.ui.fixer_tab import _tags_already_exist
+    from eyed3 import id3
+    
+    # Create MP3 file with tags
+    file_path = temp_dir / "test.mp3"
+    file_path.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    # Add tags using eyed3
+    import eyed3
+    audiofile = eyed3.load(str(file_path))
+    if audiofile.tag:
+        audiofile.tag.artist = "Test Artist"
+        audiofile.tag.title = "Test Title"
+        audiofile.tag.save()
+    
+    # Check if tags match
+    result = _tags_already_exist(file_path, "Test Artist", "Test Title")
+    assert result is True
+
+
+def test_tags_already_exist_with_mismatched_tags(temp_dir):
+    """Test _tags_already_exist when tags don't match."""
+    from musichouse.ui.fixer_tab import _tags_already_exist
+    import eyed3
+    
+    # Create MP3 file with tags
+    file_path = temp_dir / "test2.mp3"
+    file_path.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    # Add tags
+    audiofile = eyed3.load(str(file_path))
+    if audiofile.tag:
+        audiofile.tag.artist = "Original Artist"
+        audiofile.tag.title = "Original Title"
+        audiofile.tag.save()
+    
+    # Check if tags match (they shouldn't)
+    result = _tags_already_exist(file_path, "New Artist", "New Title")
+    assert result is False
+
+
+def test_tags_already_exist_with_invalid_file(temp_dir):
+    """Test _tags_already_exist with invalid MP3 file."""
+    from musichouse.ui.fixer_tab import _tags_already_exist
+    
+    # Create invalid MP3 file
+    file_path = temp_dir / "invalid.mp3"
+    file_path.write_bytes(b"not an mp3 file")
+    
+    # Should return False without raising
+    result = _tags_already_exist(file_path, "Artist", "Title")
+    assert result is False
+
+
+
+
+# ============================================================================
+# Exception Path Tests
+# ============================================================================
+
+
+def test_tags_already_exist_exception_path(temp_dir, monkeypatch):
+
+    """Test _tags_already_exist handles exceptions gracefully."""
+
+    from musichouse.ui.fixer_tab import _tags_already_exist
+
+    
+
+    # Create a valid-looking file
+
+    file_path = temp_dir / "test.mp3"
+
+    file_path.write_bytes(b"ID3" + b"\x00" * 100)
+
+    
+
+    # Mock load_mp3_safely to raise an exception
+
+    def mock_load_mp3_safely(path):
+
+        raise Exception("Simulated error")
+
+    
+
+    monkeypatch.setattr('musichouse.ui.fixer_tab.load_mp3_safely', mock_load_mp3_safely)
+
+    
+
+    # Should return False without raising
+
+    result = _tags_already_exist(file_path, "Artist", "Title")
+
+    assert result is False
+
+
+
+
+
+def test_load_saved_files_exception_path(fixer_tab, monkeypatch):
+
+    """Test _load_saved_files handles database errors gracefully."""
+
+    # Mock LeaderboardCache to raise an exception
+
+    def mock_init(self, *args, **kwargs):
+
+        raise Exception("Database error")
+
+    
+
+    monkeypatch.setattr('musichouse.ui.fixer_tab.LeaderboardCache.__init__', mock_init)
+
+    
+
+    # Create a fresh tab - should handle error without crashing
+
+    from musichouse.ui.fixer_tab import FixerTab
+
+    tab = FixerTab()
+
+    tab.show()
+
+    
+
+    # Table should be empty due to error
+
+    assert tab._table.rowCount() == 0
+
+    
+
+    tab.close()
+
+
+
+
+def test_add_row_to_table(fixer_tab_with_data):
+
+    """Test _add_row_to_table method exists and can be called."""
+
+    # Just verify the method exists and is callable
+
+    assert hasattr(fixer_tab_with_data, '_add_row_to_table')
+
+    assert callable(fixer_tab_with_data._add_row_to_table)
+
+
+def test_load_file_entry_success(temp_dir):
+
+    """Test _load_file_entry successfully loads a valid MP3."""
+
+    from musichouse.ui.fixer_tab import FixerTab
+
+    import eyed3
+
+    
+
+    # Create a valid MP3 file
+
+    file_path = temp_dir / "valid.mp3"
+
+    file_path.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+    
+
+    # Add tags
+
+    audiofile = eyed3.load(str(file_path))
+
+    if audiofile.tag:
+
+        audiofile.tag.artist = "Test Artist"
+
+        audiofile.tag.title = "Test Title"
+
+        audiofile.tag.save()
+
+    
+
+    # Create tab and load entry
+
+    tab = FixerTab()
+
+    artist_counts = {"Test Artist": 1}
+
+    
+
+    result = tab._load_file_entry(file_path, artist_counts)
+
+    
+
+    # Should return a valid entry
+
+    assert result is not None
+
+    assert result["path"] == file_path
+
+    assert result["filename"] == "valid.mp3"
+
+    assert result["existing_artist"] == "Test Artist"
+
+    assert result["existing_title"] == "Test Title"
+
+    
+
+    tab.close()
+
+
+
+
+

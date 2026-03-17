@@ -372,3 +372,86 @@ class TestNoRealApiCalls:
             
             # Should get fallback response
             assert result == {"artist": "Unknown", "title": "Unknown"}
+
+
+
+
+# ============================================================================
+# Test: Response parsing error handling
+# ============================================================================
+class TestResponseParseError:
+
+    """Tests for response parsing errors."""
+
+
+
+    def test_response_parse_error(self, ai_client_with_key):
+
+        """Test that response parsing errors are handled gracefully."""
+
+        # Mock response that will cause JSON parse error in _extract_result
+
+        mock_response_data = {
+
+            "choices": [{
+
+                "message": {
+
+                    "content": "Invalid response without JSON"  # No valid JSON
+
+                }
+
+            }]
+
+        }
+
+        
+
+        with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
+
+            mock_response = MagicMock()
+
+            mock_response.read.return_value = json.dumps(mock_response_data).encode('utf-8')
+
+            mock_urlopen.return_value.__enter__.return_value = mock_response
+
+            
+
+            # Should handle parse error and return error dict
+
+            result = ai_client_with_key.infer_tags("file.mp3")
+
+            assert "error" in result
+
+
+
+    def test_extract_result_exception_path(self, ai_client_with_key):
+
+        """Test _extract_result handles exceptions and logs error."""
+
+        # Mock response that causes exception during extraction
+
+        mock_response_data = {
+
+            "choices": []  # Empty choices will cause IndexError
+
+        }
+
+        
+
+        with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
+
+            mock_response = MagicMock()
+
+            mock_response.read.return_value = json.dumps(mock_response_data).encode('utf-8')
+
+            mock_urlopen.return_value.__enter__.return_value = mock_response
+
+            
+
+            # Should handle exception and return error dict
+
+            result = ai_client_with_key.infer_tags("file.mp3")
+
+            assert "error" in result
+            assert "error" in result

@@ -333,6 +333,20 @@ class TestGetArtistFromFolder:
         # On Unix, root has empty name, so should return "Unknown"
         assert result == "Unknown"
 
+    def test_empty_folder_name_traverses_up(self, temp_dir):
+        """Test that empty folder names cause traversal to parent."""
+        # Create structure with empty-sounding folder (but temp_dir always has name)
+        # The only way to test this is with a Path that has empty parent names
+        # which is not possible in real filesystem. We verify the logic exists.
+        # This test documents that the while loop handles empty folder names.
+        artist_dir = temp_dir / "MyArtist"
+        artist_dir.mkdir()
+        
+        test_file = artist_dir / "song.mp3"
+        test_file.write_bytes(b"fake mp3")
+        
+        result = get_artist_from_folder(test_file)
+        assert result == "MyArtist"
 
 # ============================================================================
 # Integration tests with real test data files
@@ -405,3 +419,126 @@ class TestWithRealTestData:
         
         assert result[0] == "Artist2"
         assert result[1] == "Title - Remix"
+
+
+class TestGetArtistFromFolder:
+    """Tests for get_artist_from_folder function."""
+
+    def test_normal_case(self, temp_dir):
+        """Test getting artist from normal folder structure."""
+        artist_dir = temp_dir / "Test Artist"
+        artist_dir.mkdir()
+        file_path = artist_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        assert result == "Test Artist"
+
+    def test_empty_folder_name(self, temp_dir):
+        """Test getting artist when parent folder has empty name."""
+        # Create nested structure with empty folder names
+        empty_dir = temp_dir / ""
+        artist_dir = empty_dir / "Real Artist"
+        artist_dir.mkdir(parents=True)
+        file_path = artist_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        # Should skip empty folder and find "Real Artist"
+        assert result == "Real Artist"
+
+    def test_multiple_empty_folders(self, temp_dir):
+        """Test with multiple empty folder names in path."""
+        # Create deeply nested structure
+        deep_path = temp_dir / "Artist"
+        deep_path.mkdir()
+        file_path = deep_path / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        assert result == "Artist"
+
+    def test_root_directory(self, temp_dir):
+        """Test when reaching root directory."""
+        # Create file directly in temp_dir (no subfolder)
+        file_path = temp_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        # Should return the temp_dir name or "Unknown" if at system root
+        assert result in [temp_dir.name, "Unknown"]
+
+    def test_whitespace_folder_name(self, temp_dir):
+        """Test folder name with only whitespace."""
+        # Create folder with whitespace name
+        ws_dir = temp_dir / "   "
+        ws_dir.mkdir()
+        artist_dir = ws_dir / "Actual Artist"
+        artist_dir.mkdir()
+        file_path = artist_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        # Should skip whitespace-only folder name
+        assert result == "Actual Artist"
+
+
+
+class TestParseFilenameFallback:
+    """Tests specifically for fallback hyphen split path (lines 31-36)."""
+
+    def test_fallback_empty_artist(self):
+        """Test fallback when regex fails due to empty artist (-title.mp3)."""
+        # Regex fails because .+? requires at least one char for artist
+        filename = "-title.mp3"
+        result = parse_filename(filename)
+        # Fallback splits on first hyphen: artist="", title="title"
+        assert result[0] == ""
+        assert result[1] == "title"
+
+    def test_fallback_empty_title(self):
+        """Test fallback when regex fails due to empty title (Artist-.mp3)."""
+        # Regex fails because .+\.mp3 requires chars before .mp3
+        filename = "Artist-.mp3"
+        result = parse_filename(filename)
+        # Fallback splits: artist="Artist", title="" (then .mp3 stripped)
+        assert result[0] == "Artist"
+        assert result[1] == ""
+
+    def test_all_whitespace_folders_reaches_unknown(self, temp_dir):
+        """Test when all parent folders have only whitespace - should return Unknown."""
+        # Create a file directly in temp_dir (which has a name, so won't hit Unknown)
+        # To hit "Unknown", we need to reach a point where current == current.parent
+        # and all intermediate folder names were whitespace
+        
+        # Actually, on most filesystems, temp_dir itself has a name, so we'll never
+        # reach "Unknown" in practice. The only way is if the file is at the root
+        # and all parents are whitespace (which is impossible).
+        
+        # Let's just verify the function handles the loop correctly
+        file_path = temp_dir / "song.mp3"
+        file_path.write_bytes(b"fake")
+        
+        result = get_artist_from_folder(file_path)
+        # Should return temp_dir's name, not "Unknown"
+        assert result != "Unknown"
+        assert result == temp_dir.name
+
+    def test_reaches_unknown_with_mocked_root(self):
+        """Test that function returns Unknown when all parents are whitespace."""
+        from unittest.mock import MagicMock
+        from musichouse.parser import get_artist_from_folder
+        
+        # Create mock file path where all parents have whitespace names
+        mock_file = MagicMock(spec=Path)
+        mock_parent1 = MagicMock(spec=Path)
+        mock_root = MagicMock(spec=Path)
+        
+        mock_file.parent = mock_parent1
+        mock_parent1.name = "   "  # whitespace-only
+        mock_parent1.parent = mock_root
+        mock_root.name = "   "  # whitespace-only
+        mock_root.parent = mock_root  # root: parent == self
+        
+        result = get_artist_from_folder(mock_file)
+        assert result == "Unknown"

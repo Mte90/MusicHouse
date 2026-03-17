@@ -302,3 +302,117 @@ def test_set_file_callback_custom_batch_size(scanner):
     
     assert scanner._file_callback == callback
     assert scanner._file_callback_batch_size == 50
+
+
+# ============================================================================
+# Test: Stop functionality
+# ============================================================================
+def test_stop_during_scan(scanner, mock_mp3_files):
+    """Test that scan stops when stop() is called."""
+    # Set up a callback that will stop the scanner after first file
+    def stop_after_first(file_count):
+        if file_count >= 1:
+            scanner.stop()
+    scanner.set_file_callback(stop_after_first)
+    
+    # Also set progress callback to trigger stop during directory iteration
+    def stop_after_first_dir(dir_path):
+        if stop_after_first_dir.call_count >= 1:
+            scanner.stop()
+    stop_after_first_dir.call_count = 0
+    scanner.set_progress_callback(stop_after_first_dir)
+    
+    # Act
+    results = scanner.scan()
+    
+    # Assert - is_stopped() should return True
+    assert scanner.is_stopped()
+
+
+def test_is_stopped_returns_false_when_not_stopped(scanner):
+    """Test that is_stopped returns False before stop()."""
+    # Assert
+    assert not scanner.is_stopped()
+    
+    # Scan without stopping
+    scanner.scan()
+    
+    # Still not stopped
+    assert not scanner.is_stopped()
+
+
+def test_stop_method_sets_flag(scanner):
+    """Test that stop() sets the internal flag."""
+    # Act
+    scanner.stop()
+    
+    # Assert
+    assert scanner._stop_requested
+    assert scanner.is_stopped()
+
+
+# ============================================================================
+# Test: OSError handling
+# ============================================================================
+@patch('os.walk')
+def test_scan_handles_os_error(mock_walk, temp_dir):
+    """Test that OSError during scan is caught and logged."""
+    # Make os.walk raise OSError
+    mock_walk.side_effect = OSError("Permission denied")
+    
+    scanner = MP3Scanner(temp_dir)
+    
+    # Act - should not raise
+    results = scanner.scan()
+    
+    # Assert
+    assert len(results) == 0
+    assert len(scanner.get_errors()) == 1
+    error_path, error_msg = scanner.get_errors()[0]
+    assert error_path == temp_dir
+    assert "Permission denied" in error_msg
+
+
+def test_stop_before_scan_starts(scanner):
+    """Test that scan stops immediately if stop() called before scan."""
+    # Stop before scanning
+    scanner.stop()
+    
+    # Act
+    results = scanner.scan()
+    
+    # Assert - should return empty results immediately
+    assert len(results) == 0
+    assert scanner.is_stopped()
+
+
+@patch('musichouse.scanner.logger')
+def test_stop_during_directory_iteration(mock_logger, temp_dir):
+    """Test that stop during directory iteration logs the message."""
+    # Create multiple directories
+    dir1 = temp_dir / "dir1"
+    dir2 = temp_dir / "dir2"
+    dir1.mkdir()
+    dir2.mkdir()
+    
+    # Create MP3 files
+    (dir1 / "file1.mp3").write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    (dir2 / "file2.mp3").write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    scanner = MP3Scanner(temp_dir)
+    
+    # Stop after first directory
+    def stop_after_first_dir(dir_path):
+        if stop_after_first_dir.call_count >= 1:
+            scanner.stop()
+        stop_after_first_dir.call_count += 1
+    stop_after_first_dir.call_count = 0
+    scanner.set_progress_callback(stop_after_first_dir)
+    
+    # Act
+    results = scanner.scan()
+    
+    # Assert - should have stopped during iteration
+    assert scanner.is_stopped()
+    # Verify logger.info was called with stop message
+    assert any("Scan stopped by user" in str(call) for call in mock_logger.info.call_args_list)
