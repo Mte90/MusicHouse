@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 """pytest-qt tests for FixerTab component.
 
 Tests FixerTab functionality with pytest-qt in headless offscreen mode.
@@ -8,7 +10,6 @@ import pytest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt
 from pathlib import Path
-
 
 # ============================================================================
 # Test Configuration
@@ -421,6 +422,22 @@ def test_filter_then_select(fixer_tab_with_data, qtbot):
 
 def test_empty_file_list(fixer_tab, temp_dir):
     """Test handling of empty file list."""
+    # Mock _load_saved_files to isolate from real DB
+    # The FixerTab __init__ loads files from DB, so the table has 41 entries
+    # We need to patch the DB loading to verify empty file list behavior
+    with patch('musichouse.ui.fixer_tab.FixerTab._load_saved_files'):
+        # Create fresh tab with mocked DB loading - table should be empty
+        from musichouse.ui.fixer_tab import FixerTab
+        fixer_tab_empty = FixerTab()
+        fixer_tab_empty.show()
+        
+        # Verify table is empty (mocked DB loading returned nothing)
+        assert fixer_tab_empty._table.rowCount() == 0
+        assert fixer_tab_empty.get_selected_files() == []
+        
+        fixer_tab_empty.close()
+    
+    # Now test that load_from_scan with empty files keeps table empty
     empty_files = []
     artist_counts = {}
     

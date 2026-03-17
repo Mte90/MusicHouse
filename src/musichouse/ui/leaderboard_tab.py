@@ -36,11 +36,9 @@ class LeaderboardTab(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-
-        self._table.setColumnWidth(0, 250)  # Artist column - wider for long artist names
-        self._table.setColumnWidth(2, 80)
         
+        self._table.setColumnWidth(0, 250)  # Artist column - wider for long artist names
+        self._table.setColumnWidth(1, 80)  # Count column
         self._layout.addWidget(self._table)
         
     def _load_saved_data(self):

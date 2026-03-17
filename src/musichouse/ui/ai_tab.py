@@ -114,9 +114,11 @@ class AITab(QWidget):
 
             if artists:
                 self.load_artists(artists)
+            else:
+                # Empty list - still mark as loaded so we don't keep trying
+                self._artists_loaded = True
         except Exception as e:
             logger.error(f"Error loading artists from DB: {e}")
-
     def showEvent(self, event):
         """Load artists on first show."""
         super().showEvent(event)
