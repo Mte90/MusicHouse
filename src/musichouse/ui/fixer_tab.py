@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from musichouse.parser import parse_filename
+from musichouse.parser import parse_filename, get_artist_from_folder
 from musichouse.utils import load_mp3_safely
 from musichouse.tag_writer import write_tags
 from musichouse import config
@@ -65,10 +65,6 @@ class FixerTab(QWidget):
 
         # Table widget
         self._table = QTableWidget()
-        self._table = QTableWidget()
-        self._table.setSortingEnabled(True)
-        
-
         self._table.setSortingEnabled(True)
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["", "File", "Artist", "Title"])
@@ -84,6 +80,8 @@ class FixerTab(QWidget):
         self._table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Stretch
         )
+        # Disable selection for the entire table (checkboxes don't need row selection)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellChanged.connect(self._on_cell_changed)
         self._table.setAlternatingRowColors(True)
@@ -134,7 +132,9 @@ class FixerTab(QWidget):
                        needs_fixing, missing_artist, missing_title,
                        suggested_artist, suggested_title
                   FROM scan_cache
-                 WHERE path IN ({placeholders}) AND needs_fixing = 1""",
+                 WHERE path IN ({placeholders})
+                   AND needs_fixing = 1
+                   AND (missing_artist = 1 OR missing_title = 1)""",
                 file_paths_str
             )
             
@@ -215,17 +215,12 @@ class FixerTab(QWidget):
         existing_artist = audiofile.tag.artist or ""
         existing_title = audiofile.tag.title or ""
 
-        # Parse filename for suggested fix
-        suggested_artist, suggested_title = parse_filename(file_path.name)
+        # Parse filename for suggested fix (uses folder name if no hyphen)
+        suggested_artist, suggested_title = parse_filename(file_path.name, file_path)
         
-        # If suggested artist appears to be a number, use parent directory name instead
-        import re
-        if suggested_artist and re.match(r'^\d+(?:\.\d+)?$', suggested_artist.strip()):
-            folder_artist = file_path.parent.name.strip()
-            if folder_artist and (folder_artist != suggested_artist):
-                suggested_artist = folder_artist
-        suggested_artist, suggested_title = parse_filename(file_path.name)
-
+        # If suggested artist is a number, use folder name instead
+        if suggested_artist.strip().isdigit():
+            suggested_artist = get_artist_from_folder(file_path)
         # Determine if file needs fixing
         missing_artist = not existing_artist
         missing_title = not existing_title
@@ -271,9 +266,17 @@ class FixerTab(QWidget):
                 self._add_row_to_table(entry)
 
     def _should_show_entry(self, entry: Dict, filter_text: str) -> bool:
-        """Check if entry should be shown based on filter."""
+        """Check if entry should be shown based on filter.
+        
+        CRITICAL: Only show entries that actually need fixing.
+        """
+        # First check: entry MUST have at least one missing tag
+        if not (entry["missing_artist"] or entry["missing_title"]):
+            return False  # Skip files with complete metadata
+        
+        # Then apply specific filter
         if filter_text == "All":
-            return True
+            return True  # Already filtered above, show all files needing fix
         elif filter_text == "Missing Artist":
             return entry["missing_artist"]
         elif filter_text == "Missing Title":
@@ -368,8 +371,10 @@ class FixerTab(QWidget):
             title_item = self._table.item(row, 3)
             new_artist = artist_item.text() if artist_item else entry["suggested_artist"]
             new_title = title_item.text() if title_item else entry["suggested_title"]
-            # Write tags to file
-            success = write_tags(file_path, new_artist, new_title)
+            # Write tags to file (ensure file_path is Path)
+            if isinstance(file_path, str):
+                file_path = Path(file_path)
+            success = write_tags(file_path, new_artist, new_title, force=True)
             # Consider success if:
             # - write_tags returned True (tags were written)
             # - write_tags returned False because tags already exist (file is already fixed)
@@ -433,7 +438,9 @@ class FixerTab(QWidget):
             new_artist = entry["suggested_artist"]
             new_title = entry["suggested_title"]
             
-            # Write tags to file
+            # Write tags to file (ensure file_path is Path)
+            if isinstance(file_path, str):
+                file_path = Path(file_path)
             success = write_tags(file_path, new_artist, new_title)
             if success:
                 fixed_paths.append(file_path)

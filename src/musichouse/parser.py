@@ -2,15 +2,18 @@
 
 import re
 from pathlib import Path
+from typing import Optional
 
 
-def parse_filename(filename: str) -> tuple[str, str]:
+def parse_filename(filename: str, file_path: Optional[Path] = None) -> tuple[str, str]:
     """Parse MP3 filename to extract artist and title.
     
     Handles pattern: "artist - title.mp3" with flexible spacing around hyphen.
+    If no hyphen found, uses parent directory name as artist.
     
     Args:
         filename: The filename string (with .mp3 extension).
+        file_path: Optional full path to the file (used to get folder name).
         
     Returns:
         Tuple of (artist, title) extracted from filename.
@@ -35,34 +38,23 @@ def parse_filename(filename: str) -> tuple[str, str]:
         if title.lower().endswith('.mp3'):
             title = title[:-4]
         return (artist, title)
-    # No hyphen found - use parent directory name as artist instead
-    # Only happens when filename lacks artist info and has no hyphen
-    name = filename
-    if name.lower().endswith('.mp3'):
-        name = name[:-4]
+    
+    # No hyphen found - use parent directory name as artist
+    name = filename[:-4]  # Strip .mp3
     
     if not name:
         return ("", "")
     
-    # Use parent directory name as artist
-    artist_from_folder = "Unknown"
-    try:
-        # Extract directory name from the filename path info
-        # Since we only have filename, we need to get folder name otherwise
-        import os
-        # Simulate getting folder name - will need actual file path
-        # For now return filename as artist (existing behavior)
-        return (name.strip(), name.strip())
-    except:
-        return (name.strip(), name.strip())
-    # No hyphen found, strip .mp3 and return full name
-    name = filename
-    if name.lower().endswith('.mp3'):
-        name = name[:-4]
-    
-    if not name:
-        return ("", "")
-    
+    # If we have the full path, use folder name as artist
+    if file_path:
+        folder_artist = get_artist_from_folder(file_path)
+        if folder_artist and folder_artist != "Unknown":
+            # If the name part is a number, use folder name as artist
+            # This handles cases like "123.mp3" where 123 would be wrong artist
+            if name.strip().isdigit():
+                return (folder_artist, name)
+            return (folder_artist, name)
+    # Fallback: return name as both artist and title
     return (name.strip(), name.strip())
 
 

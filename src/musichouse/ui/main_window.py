@@ -140,7 +140,7 @@ class ScanWorker(QThread):
                         # Emit file_needs_fix signal for real-time UI update
                         if artist is None or title is None:
                             from musichouse.parser import parse_filename
-                            suggested_artist, suggested_title = parse_filename(file_path.name)
+                            suggested_artist, suggested_title = parse_filename(file_path.name, file_path)
                             self.file_needs_fix.emit({
                                 'path': str(file_path),
                                 'filename': file_path.name,
@@ -163,7 +163,7 @@ class ScanWorker(QThread):
                         })
                         # Emit as needing fix
                         from musichouse.parser import parse_filename
-                        suggested_artist, suggested_title = parse_filename(file_path.name)
+                        suggested_artist, suggested_title = parse_filename(file_path.name, file_path)
                         self.file_needs_fix.emit({
                             'path': str(file_path),
                             'filename': file_path.name,
@@ -175,25 +175,82 @@ class ScanWorker(QThread):
                             'missing_title': True,
                         })
                     
-                    # Update progress every 10 files
+                    # Update progress every 10 files during tag reading
                     if i % 10 == 0 or i == total_files:
-                        self.progress.emit(f"Processing: {i}/{total_files} files")
+                        self.progress.emit(f"Reading tags: {i}/{total_files}")
                         self.tag_read_progress.emit(i, total_files)
+                    
+                    # Small sleep to let UI thread process signals
+                    # Prevents UI freeze during intensive scans
+                    if i % 10 == 0:
+                        import time
+                        time.sleep(0.01)  # 10ms sleep every 10 files
+                # Phase 3: Update cache with PROGRESS (batch by batch)
+                import time
+                batch_size = 100
+                total_cache = len(files_info)
+                conn = cache._get_connection()
                 
-                # Update cache with new tag info
-                cache.update_scan_cache(files_info)
-                logger.info("Cache updated")
-            
-            cache.close()
-            # Emit scan finished signal with file paths and artist counts
-            self.scan_finished.emit(files_to_process, self._artist_counts)
-            
+
+                try:
+                    for batch_start in range(0, total_cache, batch_size):
+                        batch_end = min(batch_start + batch_size, total_cache)
+                        batch = files_info[batch_start:batch_end]
+                        
+
+                        # Update this batch
+                        for info in batch:
+                            conn.execute(
+                                """INSERT OR REPLACE INTO scan_cache
+                                   (path, size, mtime, artist, title, scan_time,
+                                    needs_fixing, missing_artist, missing_title,
+                                    suggested_artist, suggested_title)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (info['path'], info['size'], info['mtime'],
+                                 info.get('artist'), info.get('title'), time.time(),
+                                 info.get('needs_fixing', 0), info.get('missing_artist', 0),
+                                 info.get('missing_title', 0), info.get('suggested_artist'),
+                                 info.get('suggested_title'))
+                            )
+                        
+
+                        # Update progress
+                        current = batch_end
+                        self.progress.emit(f"Updating cache: {current}/{total_cache} entries")
+                        # Total progress: files read + cache updated
+                        total_progress = total_files + current
+                        total_work = total_files + total_cache
+                        self.tag_read_progress.emit(total_progress, total_work)
+                        
+
+                        # Small sleep for UI responsiveness every few batches
+                        if batch_start % 500 == 0 and batch_start > 0:
+                            time.sleep(0.01)
+                    
+
+                    # Commit all changes before closing
+                    conn.commit()
+                    # Force WAL checkpoint to ensure data is written to main DB file
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    logger.info(f"Scan complete: {total_files} files, {total_cache} cache entries committed")
+                    
+
+                except Exception as e:
+                    logger.error(f"Error committing scan cache: {e}")
+                    raise
+                finally:
+                    cache.close()
+                    logger.info("Cache connection closed")
+                
+
+                # Emit scan finished signal
+                self.scan_finished.emit(self._files_found, self._artist_counts)
         except Exception as e:
             logger.error(f"Scan error: {e}")
             self.error.emit(f"Scan failed: {str(e)}")
         finally:
             self._scanner = None
-    def _read_tags_with_progress(self, total_files: int, files_list: Optional[List[Path]] = None) -> None:
+            self._pause_event.set()  # Ensure thread doesn't block if stopped
         """Read ID3 tags from all files with progress emission.
         
         CRITICAL:
@@ -245,7 +302,7 @@ class ScanWorker(QThread):
                 if artist is None or title is None:
                     # Parse filename for suggestions
                     from musichouse.parser import parse_filename
-                    suggested_artist, suggested_title = parse_filename(file_path.name)
+                    suggested_artist, suggested_title = parse_filename(file_path.name, file_path)
                     # Emit signal for real-time FixerTab update
                     self.file_needs_fix.emit({
                         'path': str(file_path),
@@ -260,7 +317,7 @@ class ScanWorker(QThread):
             except Exception:
                 # Silently handle tag read errors - file will be marked as needing fixing
                 from musichouse.parser import parse_filename
-                suggested_artist, suggested_title = parse_filename(file_path.name)
+                suggested_artist, suggested_title = parse_filename(file_path.name, file_path)
                 self.file_needs_fix.emit({
                     'path': str(file_path),
                     'filename': file_path.name,
@@ -529,10 +586,13 @@ class MainWindow(QMainWindow):
 
     def _on_tag_read_progress(self, current: int, total: int) -> None:
         """Handle tag reading progress update."""
-        self._status_label.setText(f"Reading tags: {current}/{total}")
+        self._status_label.setText(f"Processing: {current}/{total}")
         # Update progress bar with real progress
         self._progress_bar.setRange(0, total)
         self._progress_bar.setValue(current)
+        # Force UI update to ensure progress is shown immediately
+        from PyQt6.QtWidgets import QApplication
+        QApplication.processEvents()
     def _on_scan_stats(self, new_count: int, modified_count: int, skipped_count: int) -> None:
         """Handle scan statistics from incremental scan."""
         self._scan_stats_summary = (new_count, modified_count, skipped_count)
@@ -594,17 +654,14 @@ class MainWindow(QMainWindow):
         # We don't update it here to avoid disrupting user's current selection
 
     def _on_file_needs_fix(self, file_entry: dict) -> None:
-        """Handle file scanned that needs fixing (throttled for UI performance)."""
-        # ALWAYS save to DB (not throttled)
-        self._save_file_to_db(file_entry)
+        """Handle file scanned that needs fixing.
         
-        # Throttle FixerTab updates to every 50 files (prevents UI blocking)
-        self._file_update_counter += 1
-        if self._file_update_counter % 50 != 0:
-            return  # Skip UI update
-        # Add file to FixerTab every 50 updates
-        self._fixer_tab.add_file_entry(file_entry)
-    
+        NO-OP: Files are loaded from DB after scan completes, not during scan.
+        This prevents showing files that may already have correct metadata during scan.
+        """
+        # Do nothing during scan - load_from_scan() will populate the table after scan completes
+        # This ensures ONLY files with missing metadata are shown
+        pass
     def _save_file_to_db(self, file_entry: dict) -> None:
         """Save file entry to database during scan."""
         try:
