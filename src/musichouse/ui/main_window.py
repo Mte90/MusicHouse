@@ -112,17 +112,19 @@ class ScanWorker(QThread):
             files_to_process = changed_files
             total_files = len(files_to_process)
             
-            # Phase 2: Read ID3 tags for changed files only (slow operation with progress)
+            # Phase 2: Read ID3 tags, update cache, and emit real-time fixes in single pass
             if total_files > 0:
-                self.progress.emit(f"Reading tags: 0/{total_files} (incremental)")
-                self._read_tags_with_progress(total_files, files_to_process)
+                self.progress.emit(f"Processing: 0/{total_files} files")
                 
-                # Update cache with new tag info
+                # Single loop: read tags + update cache + emit file_needs_fix signals
                 files_info = []
                 for i, file_path in enumerate(files_to_process, 1):
+                    # Check for stop
+                    if self._stop_requested:
+                        logger.info("Scan stopped by user")
+                        break
+                    
                     try:
-                        import eyed3
-                        import os
                         audio_file = eyed3.load(str(file_path))
                         artist = getattr(audio_file.tag, 'artist', None) if audio_file and audio_file.tag else None
                         title = getattr(audio_file.tag, 'title', None) if audio_file and audio_file.tag else None
@@ -134,13 +136,55 @@ class ScanWorker(QThread):
                             'artist': artist,
                             'title': title
                         })
+                        
+                        # Emit file_needs_fix signal for real-time UI update
+                        if artist is None or title is None:
+                            from musichouse.parser import parse_filename
+                            suggested_artist, suggested_title = parse_filename(file_path.name)
+                            self.file_needs_fix.emit({
+                                'path': str(file_path),
+                                'filename': file_path.name,
+                                'existing_artist': artist or "",
+                                'existing_title': title or "",
+                                'suggested_artist': suggested_artist,
+                                'suggested_title': suggested_title,
+                                'missing_artist': artist is None,
+                                'missing_title': title is None,
+                            })
                     except Exception:
-                        # Silently handle tag read errors during scan phase
-                        pass  # File will be caught in tag reading phase
+                        # Include failed files with None values
+                        stat = file_path.stat()
+                        files_info.append({
+                            'path': str(file_path),
+                            'size': stat.st_size,
+                            'mtime': stat.st_mtime,
+                            'artist': None,
+                            'title': None
+                        })
+                        # Emit as needing fix
+                        from musichouse.parser import parse_filename
+                        suggested_artist, suggested_title = parse_filename(file_path.name)
+                        self.file_needs_fix.emit({
+                            'path': str(file_path),
+                            'filename': file_path.name,
+                            'existing_artist': "",
+                            'existing_title': "",
+                            'suggested_artist': suggested_artist,
+                            'suggested_title': suggested_title,
+                            'missing_artist': True,
+                            'missing_title': True,
+                        })
+                    
+                    # Update progress every 10 files
+                    if i % 10 == 0 or i == total_files:
+                        self.progress.emit(f"Processing: {i}/{total_files} files")
+                        self.tag_read_progress.emit(i, total_files)
+                
+                # Update cache with new tag info
                 cache.update_scan_cache(files_info)
+                logger.info("Cache updated")
             
             cache.close()
-            
             # Emit scan finished signal with file paths and artist counts
             self.scan_finished.emit(files_to_process, self._artist_counts)
             
@@ -228,14 +272,14 @@ class ScanWorker(QThread):
                     'missing_title': True,
                 })
             
-            # Emit progress every 100 files
-            if i % 100 == 0:
+            # Emit progress every 10 files for smoother UI updates
+            if i % 10 == 0:
                 self.tag_read_progress.emit(i, total_files)
                 self.progress.emit(f"Reading tags: {i}/{total_files}")
         
-        # Emit final progress
+        # Emit final progress for all files (including non-100 multiples)
         self.tag_read_progress.emit(total_files, total_files)
-        self.progress.emit(f"Reading tags: {total_files}/{total_files}")
+        self.progress.emit(f"Reading tags: {total_files}/{total_files} - Complete!")
 
     def pause(self) -> None:
         """Pause the scan."""
@@ -597,6 +641,8 @@ class MainWindow(QMainWindow):
                 )
             )
             conn.commit()
+            # Force WAL checkpoint to ensure data is written to main DB
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             cache.close()
         except Exception as e:
             logger.error(f"Error saving file to DB: {e}")

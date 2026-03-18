@@ -65,6 +65,11 @@ class FixerTab(QWidget):
 
         # Table widget
         self._table = QTableWidget()
+        self._table = QTableWidget()
+        self._table.setSortingEnabled(True)
+        
+
+        self._table.setSortingEnabled(True)
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["", "File", "Artist", "Title"])
         self._table.horizontalHeader().setSectionResizeMode(
@@ -100,21 +105,62 @@ class FixerTab(QWidget):
 
     def load_from_scan(self, files: List[Path], artist_counts: Dict[str, int]):
         """Load files from a scan result.
-
+        
+        Loads from database instead of re-reading files to avoid blocking UI.
+        
         Args:
-            files: List of MP3 file paths.
+            files: List of MP3 file paths (used to filter which files to load).
             artist_counts: Dictionary of artist name counts (for filtering).
         """
-        # Only clear and reload if we actually scanned new files
-        # If files is empty (incremental scan found no changes), keep existing data
-        if files:
+        # Load from database instead of re-reading files
+        # The scan already read tags and stored them in scan_cache
+        try:
+            from musichouse import config as app_config
+            from musichouse.leaderboard_cache import LeaderboardCache
+            
+            cache = LeaderboardCache(app_config.get_config_dir())
+            conn = cache._get_connection()
+            
+            # Get file paths as strings for SQL
+            file_paths_str = [str(f) for f in files]
+            if not file_paths_str:
+                cache.close()
+                return
+            
+            # Query for files that need fixing from the scan results
+            placeholders = ','.join('?' * len(file_paths_str))
+            cursor = conn.execute(
+                f"""SELECT path, artist, title,
+                       needs_fixing, missing_artist, missing_title,
+                       suggested_artist, suggested_title
+                  FROM scan_cache
+                 WHERE path IN ({placeholders}) AND needs_fixing = 1""",
+                file_paths_str
+            )
+            
             self._files_data = []
-
-            for file_path in files:
-                entry = self._load_file_entry(file_path, artist_counts)
-                if entry:
-                    self._files_data.append(entry)
-
+            for row in cursor.fetchall():
+                path = Path(row["path"])
+                entry = {
+                    "path": path,
+                    "filename": path.name,
+                    "existing_artist": row["artist"] or "",
+                    "existing_title": row["title"] or "",
+                    "suggested_artist": row["suggested_artist"] or "",
+                    "suggested_title": row["suggested_title"] or "",
+                    "missing_artist": bool(row["missing_artist"]),
+                    "missing_title": bool(row["missing_title"]),
+                }
+                self._files_data.append(entry)
+            
+            cache.close()
+            logger.info(f"Loaded {len(self._files_data)} files from scan cache (no file I/O)")
+            
+            self._apply_filter()
+        except Exception as e:
+            logger.error(f"Error loading scan results from DB: {e}")
+            # Fallback: clear data
+            self._files_data = []
             self._apply_filter()
     
     def _load_saved_files(self):
@@ -126,13 +172,14 @@ class FixerTab(QWidget):
             cache = LeaderboardCache(app_config.get_config_dir())
             conn = cache._get_connection()
             
-            # Get all files with needs_fixing=1
+            # Get files with needs_fixing=1 AND at least one missing tag
+            # This ensures stale entries without actual missing tags are excluded
             cursor = conn.execute(
-                """SELECT path, artist, title, 
+                """SELECT path, artist, title,
                        needs_fixing, missing_artist, missing_title,
                        suggested_artist, suggested_title
                   FROM scan_cache
-                 WHERE needs_fixing = 1"""
+                 WHERE needs_fixing = 1 AND (missing_artist = 1 OR missing_title = 1)"""
             )
             
             self._files_data = []
@@ -169,6 +216,14 @@ class FixerTab(QWidget):
         existing_title = audiofile.tag.title or ""
 
         # Parse filename for suggested fix
+        suggested_artist, suggested_title = parse_filename(file_path.name)
+        
+        # If suggested artist appears to be a number, use parent directory name instead
+        import re
+        if suggested_artist and re.match(r'^\d+(?:\.\d+)?$', suggested_artist.strip()):
+            folder_artist = file_path.parent.name.strip()
+            if folder_artist and (folder_artist != suggested_artist):
+                suggested_artist = folder_artist
         suggested_artist, suggested_title = parse_filename(file_path.name)
 
         # Determine if file needs fixing
@@ -234,7 +289,8 @@ class FixerTab(QWidget):
 
         # Checkbox
         checkbox_item = QTableWidgetItem()
-        checkbox_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+        # Enable both selection and checking
+        checkbox_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
         checkbox_item.setCheckState(Qt.CheckState.Unchecked)
         self._table.setItem(row, 0, checkbox_item)
 
@@ -319,9 +375,9 @@ class FixerTab(QWidget):
             # - write_tags returned False because tags already exist (file is already fixed)
             if success or _tags_already_exist(file_path, new_artist, new_title):
                 fixed_paths.append(file_path)
-                logger.info(f"Fixed: {file_path.name}")
+                logger.info(f"Fixed: {file_path.split('/')[-1] if isinstance(file_path, str) else file_path.name}")
             else:
-                logger.error(f"Failed to fix: {file_path.name}")
+                logger.error(f"Failed to fix: {file_path.split('/')[-1] if isinstance(file_path, str) else file_path.name}")
 
         # Update DB: mark fixed files as not needing fixing
         if fixed_paths:
@@ -336,19 +392,20 @@ class FixerTab(QWidget):
         """Update database to mark files as fixed."""
         try:
             cache = LeaderboardCache(config.get_config_dir())
+            conn = cache._get_connection()
             for path in fixed_paths:
                 # Update the scan_cache row to set needs_fixing = 0
-                conn = cache._get_connection()
                 conn.execute(
                     "UPDATE scan_cache SET needs_fixing = 0, missing_artist = 0, missing_title = 0 WHERE path = ?",
                     (str(path),)
                 )
             conn.commit()
+            # Force WAL checkpoint to ensure data is written to main DB
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             cache.close()
             logger.info(f"Updated DB for {len(fixed_paths)} fixed files")
         except Exception as e:
             logger.error(f"Error updating DB after fix: {e}")
-    
     def _remove_fixed_rows(self, fixed_paths: List[Path]) -> None:
         """Remove fixed rows from the table (in reverse order to preserve indices)."""
         # Find row indices that match the fixed paths

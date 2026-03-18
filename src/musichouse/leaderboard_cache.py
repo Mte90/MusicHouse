@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
+from musichouse.utils import load_mp3_safely
 from musichouse import logging
 
 logger = logging.get_logger(__name__)
@@ -139,7 +140,7 @@ class LeaderboardCache:
         """
         conn = self._get_connection()
         cursor = conn.execute(
-            "SELECT path, size, mtime, artist, title, scan_time FROM scan_cache WHERE path = ?",
+            "SELECT path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title FROM scan_cache WHERE path = ?",
             (path,)
         )
         row = cursor.fetchone()
@@ -150,7 +151,10 @@ class LeaderboardCache:
                 'mtime': row['mtime'],
                 'artist': row['artist'],
                 'title': row['title'],
-                'scan_time': row['scan_time']
+                'scan_time': row['scan_time'],
+                'needs_fixing': row['needs_fixing'],
+                'missing_artist': row['missing_artist'],
+                'missing_title': row['missing_title']
             }
         return None
 
@@ -215,18 +219,53 @@ class LeaderboardCache:
                     cached = self.get_cached_info(path_str)
                     
                     if cached is None:
-                        # New file
+                        # New file - always include
                         changed_files.append(file_path)
                         new_count += 1
                     elif cached['size'] != size or cached['mtime'] != mtime:
-                        # Modified file
+                        # Modified file - check if it needs fixing
+                        needs_fixing = self._check_needs_fixing(file_path)
+                        if needs_fixing:
+                            changed_files.append(file_path)
+                            modified_count += 1
+                        else:
+                            skipped_count += 1
+                    elif cached['needs_fixing']:
+                        # Unchanged file but marked as needing fixing in DB
+                        # This handles files that were cached with needs_fixing=1
+                        # but mtime/size haven't changed yet
                         changed_files.append(file_path)
                         modified_count += 1
                     else:
-                        # Unchanged file
+                        # Unchanged file with no needs_fixing flag - skip
                         skipped_count += 1
         
         return changed_files, new_count, modified_count, skipped_count
+
+    def _check_needs_fixing(self, file_path: Path) -> bool:
+        """Check if a file needs fixing by verifying ID3 tag correctness.
+        
+        Args:
+            file_path: Path to the MP3 file.
+            
+        Returns:
+            True if file is missing required tags (artist or title),
+            or if file cannot be read (corrupted/invalid MP3).
+            False if file has valid tags (artist and title are set).
+        """
+        try:
+            audiofile = load_mp3_safely(file_path)
+            if audiofile is None or audiofile.tag is None:
+                # Can't read file or no tags - treat as needing fixing
+                return True
+            
+            existing_artist = getattr(audiofile.tag, 'artist', None) or ''
+            existing_title = getattr(audiofile.tag, 'title', None) or ''
+            
+            return not existing_artist or not existing_title
+        except Exception:
+            # On any error reading the file, assume it needs fixing
+            return True
 
     def close(self) -> None:
         """Close database connection."""

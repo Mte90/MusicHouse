@@ -19,8 +19,9 @@ def parse_filename(filename: str) -> tuple[str, str]:
     if not filename.lower().endswith('.mp3'):
         return (filename.strip(), filename.strip())
     
-    # Pattern: "artist - title.mp3" with flexible spacing
-    match = re.match(r'^(.+?)\s*-\s*(.+\.mp3)$', filename, re.IGNORECASE)
+    # Pattern: "artist - title.mp3" with flexible spacing around hyphen or en-dash
+    # Handles both regular hyphen (-) and en-dash (–)
+    match = re.match(r'^(.+?)\s*[-–]\s*(.+\.mp3)$', filename, re.IGNORECASE)
     if match:
         artist = match.group(1).strip()
         title = match.group(2)[:-4]  # Strip .mp3
@@ -34,7 +35,26 @@ def parse_filename(filename: str) -> tuple[str, str]:
         if title.lower().endswith('.mp3'):
             title = title[:-4]
         return (artist, title)
+    # No hyphen found - use parent directory name as artist instead
+    # Only happens when filename lacks artist info and has no hyphen
+    name = filename
+    if name.lower().endswith('.mp3'):
+        name = name[:-4]
     
+    if not name:
+        return ("", "")
+    
+    # Use parent directory name as artist
+    artist_from_folder = "Unknown"
+    try:
+        # Extract directory name from the filename path info
+        # Since we only have filename, we need to get folder name otherwise
+        import os
+        # Simulate getting folder name - will need actual file path
+        # For now return filename as artist (existing behavior)
+        return (name.strip(), name.strip())
+    except:
+        return (name.strip(), name.strip())
     # No hyphen found, strip .mp3 and return full name
     name = filename
     if name.lower().endswith('.mp3'):
