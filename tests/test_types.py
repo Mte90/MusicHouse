@@ -181,6 +181,8 @@ class TestRemoveFixedRowsTypeBugs:
         from musichouse.ui.fixer_tab import FixerTab
 
         tab = FixerTab()
+        # Clear any pre-loaded data from database
+        tab._files_data = []
         tab.add_file_entry({
             "path": "/test/str_path.mp3",
             "filename": "str_path.mp3",

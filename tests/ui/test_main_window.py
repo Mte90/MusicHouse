@@ -131,7 +131,7 @@ def test_scan_worker_signals_exist(qapp, temp_dir):
     assert hasattr(worker, 'file_processed')
     assert hasattr(worker, 'scan_finished')
     assert hasattr(worker, 'error')
-    assert hasattr(worker, 'db_update_request')
+    # Note: db_update_request signal was removed (no longer needed)
     assert hasattr(worker, 'tag_read_progress')
     assert hasattr(worker, 'scan_stats')
     
@@ -274,7 +274,7 @@ def test_on_tag_read_progress_updates_progress_bar(main_window):
     """Test that tag read progress updates progress bar."""
     main_window._on_tag_read_progress(50, 100)
     
-    assert main_window._status_label.text() == "Reading tags: 50/100"
+    assert main_window._status_label.text() == "Processing: 50/100"
     assert main_window._progress_bar.maximum() == 100
     assert main_window._progress_bar.value() == 50
 
@@ -608,20 +608,6 @@ def test_on_scan_stats_without_skipped(main_window):
     assert "Found 15 files to process" in main_window._status_label.text()
 
 
-def test_on_db_update_request(main_window, caplog):
-    """Test _on_db_update_request logs the request."""
-    from pathlib import Path
-    
-    files = [Path("/test/file1.mp3"), Path("/test/file2.mp3")]
-    
-    # Call handler
-    main_window._on_db_update_request(files)
-    
-    # Handler exists and doesn't crash
-    # (DB update is handled elsewhere)
-
-
-def test_pause_resume_icon_changes(qapp, monkeypatch):
     """Test pause/resume button icon changes."""
     from musichouse.ui.main_window import MainWindow
     from PyQt6.QtGui import QIcon
@@ -958,7 +944,7 @@ def test_scan_worker_read_tags_with_progress(qapp, temp_dir, monkeypatch):
     # Verify progress was emitted (every 100 files, so only at end for 5 files)
     # Final progress should be emitted
     assert (5, 5) in tag_progress
-    assert "Reading tags: 5/5" in progress_msgs
+    assert "Processing: 5/5" in progress_msgs
 
 
 def test_scan_worker_read_tags_with_stop(qapp, temp_dir, monkeypatch):
