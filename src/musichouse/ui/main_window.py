@@ -212,17 +212,11 @@ class ScanWorker(QThread):
                             time.sleep(0.01)
                     
 
-                    # Emit scan finished BEFORE blocking commit operations
-                    # This ensures UI is notified immediately when tag reading is done
+                    # Emit scan finished - cache uses autocommit mode so no explicit commit needed
                     self.scan_finished.emit(self._files_found, self._artist_counts)
-                    
-                    # Commit all changes after UI is notified
-                    conn.commit()
-                    # Force WAL checkpoint to ensure data is written to main DB file
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    logger.info(f"Scan complete: {total_files} files, {total_cache} cache entries committed")
+                    logger.info(f"Scan complete: {total_files} files, {total_cache} cache entries")
                 except Exception as e:
-                    logger.error(f"Error committing scan cache: {e}")
+                    logger.error(f"Error during scan cache update: {e}")
                     raise
                 finally:
                     cache.close()
