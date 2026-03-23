@@ -217,23 +217,22 @@ class ScanWorker(QThread):
                             time.sleep(0.01)
                     
 
+                    logger.info(f"Cache update complete, emitting scan_finished signal")
                     # Emit scan finished - cache uses autocommit mode so no explicit commit needed
+                    # NOTE: cache.close() removed to avoid blocking on WAL checkpoint
+                    # The thread-local connection will be cleaned up when thread terminates
                     self.scan_finished.emit(self._files_found, self._artist_counts)
-                    logger.info(f"Scan complete: {total_files} files, {total_cache} cache entries")
+                    logger.info(f"Scan finished signal emitted, thread will terminate")
                 except Exception as e:
                     logger.error(f"Error during scan cache update: {e}")
                     raise
-                finally:
-                    cache.close()
-                    logger.info("Cache connection closed")
         except Exception as e:
             logger.error(f"Scan error: {e}")
             self.error.emit(f"Scan failed: {str(e)}")
         finally:
             self._scanner = None
             self._pause_event.set()  # Ensure thread doesn't block if stopped
-
-
+            logger.info("ScanWorker thread cleanup complete")
     def pause(self) -> None:
         """Pause the scan."""
         logger.debug("Scan PAUSE requested - clearing event")
@@ -281,7 +280,6 @@ class MainWindow(QMainWindow):
         self._last_scan_path: Optional[Path] = Path(last_dir) if last_dir else None
         self._is_scanning = False
         self._scan_stats_summary: Optional[Tuple[int, int, int]] = None
-        self._setup_ui()
         self._setup_ui()
         self._connect_signals()
         logger.info("MainWindow initialized")
@@ -498,7 +496,7 @@ class MainWindow(QMainWindow):
             self._status_label.setText(f"Found {new_count + modified_count} files to process")
     def _on_scan_finished(self, files: List[Path], artist_counts: Dict[str, int]) -> None:
         """Handle scan completion."""
-        logger.info(f"Scan finished: {len(files)} files, {len(artist_counts)} artists")
+        logger.info(f"Scan finished signal received: {len(files)} files, {len(artist_counts)} artists")
         
         # Update UI
         self._is_scanning = False
@@ -520,18 +518,27 @@ class MainWindow(QMainWindow):
             self._status_label.setText(f"Scan complete: {len(files)} files found")
         
         # Populate fixer tab
+        logger.info("Loading fixer tab from scan cache...")
         self._fixer_tab.load_from_scan(files, artist_counts)
+        logger.info("Fixer tab loaded successfully")
         
-        # Update leaderboard
+        # Update leaderboard using pre-computed artist_counts (already calculated during scan)
         if self._leaderboard:
+            logger.info(f"Updating leaderboard with {len(artist_counts)} pre-computed artist counts...")
+            top_artists = self._leaderboard.update_from_artist_counts(artist_counts)
+            self._leaderboard_tab.update_leaderboard(top_artists)
+            logger.info("Leaderboard updated successfully from cached counts")
+        if self._leaderboard:
+            logger.info("Updating leaderboard from files...")
             top_artists = self._leaderboard.update_from_files(files)
             self._leaderboard_tab.update_leaderboard(top_artists)
+            logger.info("Leaderboard updated successfully")
         
         # Update AI tab artist list
         self._ai_tab.load_artists(list(artist_counts.keys()))
         
         self._progress_bar.setVisible(False)
-    
+        logger.info("Scan completion handler finished - UI should be responsive")
     def _on_artist_count_updated(self, artist: str, count: int) -> None:
         """Handle artist count update during scan (throttled for UI performance)."""
         # Update local artist counts
@@ -545,48 +552,8 @@ class MainWindow(QMainWindow):
             top_artists = self._leaderboard.update_from_artist_counts(self._artist_counts)
             self._leaderboard_tab.update_leaderboard(top_artists)
         # Note: AI tab dropdown will be updated on first show via load_artists()
+        # Note: AI tab dropdown will be updated on first show via load_artists()
         # We don't update it here to avoid disrupting user's current selection
-
-        """Save file entry to database during scan."""
-        try:
-            from musichouse import config as app_config
-            from musichouse.leaderboard_cache import LeaderboardCache
-            import time
-            
-            cache = LeaderboardCache(app_config.get_config_dir())
-            conn = cache._get_connection()
-            
-            # Get file stats
-            import os
-            stat = os.stat(file_entry['path'])
-            
-            # Insert/update scan_cache with needs_fixing = 1
-            conn.execute(
-                """INSERT OR REPLACE INTO scan_cache
-                   (path, size, mtime, artist, title, scan_time,
-                    needs_fixing, missing_artist, missing_title,
-                    suggested_artist, suggested_title)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    file_entry['path'],
-                    stat.st_size,
-                    stat.st_mtime,
-                    file_entry.get('existing_artist', ''),
-                    file_entry.get('existing_title', ''),
-                    time.time(),
-                    1,  # needs_fixing = 1
-                    1 if file_entry.get('missing_artist') else 0,
-                    1 if file_entry.get('missing_title') else 0,
-                    file_entry.get('suggested_artist', ''),
-                    file_entry.get('suggested_title', ''),
-                )
-            )
-            conn.commit()
-            # Force WAL checkpoint to ensure data is written to main DB
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            cache.close()
-        except Exception as e:
-            logger.error(f"Error saving file to DB: {e}")
 
     def _on_scan_error(self, error_msg: str) -> None:
         """Handle scan error."""
