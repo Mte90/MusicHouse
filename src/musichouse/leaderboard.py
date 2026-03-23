@@ -25,7 +25,6 @@ class Leaderboard:
         
         # Load existing artists from DB
         self._top_artists = self._cache.get_all_artists()
-        self._cache.close()  # IMPORTANT: close after loading
 
     def update_from_files(self, files: List[Path]) -> List[Tuple[str, int]]:
         """Update leaderboard from a list of MP3 files."""
@@ -44,9 +43,10 @@ class Leaderboard:
         counter = Counter(artists)
         self._top_artists = counter.most_common(10)
 
-        # Update SQLite cache
-        self._cache.update_artists(dict(counter.most_common()))
-        self._cache.close()  # IMPORTANT: close after update
+        # Update SQLite cache with fresh connection
+        cache = leaderboard_cache.LeaderboardCache(self.cache_path)
+        cache.update_artists(dict(counter.most_common()))
+        cache.close()
         
         return self._top_artists
     
@@ -64,9 +64,10 @@ class Leaderboard:
             reverse=True
         )
         
-        # Update SQLite cache
-        self._cache.update_artists(artist_counts)
-        self._cache.close()  # IMPORTANT: close after update
+        # Update SQLite cache with fresh connection
+        cache = leaderboard_cache.LeaderboardCache(self.cache_path)
+        cache.update_artists(artist_counts)
+        cache.close()
         
         return self._top_artists
 
@@ -76,9 +77,10 @@ class Leaderboard:
 
     def reset(self) -> None:
         """Reset the leaderboard and clear cache."""
-        if self._cache:
-            self._cache.clear()
-            self._cache.close()
+        # Clear cache with fresh connection
+        cache = leaderboard_cache.LeaderboardCache(self.cache_path)
+        cache.clear()
+        cache.close()
 
     def __del__(self):
         """Cleanup database connection."""

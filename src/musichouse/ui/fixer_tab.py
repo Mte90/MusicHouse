@@ -1,6 +1,6 @@
 """Fixer tab for MP3 tag correction in MusicHouse."""
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -44,7 +44,7 @@ class FixerTab(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._files_data: List[Dict] = []
+        self._files_data: List[Dict[str, Any]] = []  # All entries must have "path" as Path object
         self._setup_ui()
         self._load_saved_files()
 
@@ -237,15 +237,19 @@ class FixerTab(QWidget):
             "missing_title": missing_title,
         }
 
-    def add_file_entry(self, entry: dict):
+    def add_file_entry(self, entry: Dict[str, Any]) -> None:
         """Add a single file entry to the table in real-time.
         
         Only adds the row if it passes the current filter (efficient - no table rebuild).
         
         Args:
-            entry: Dict with path, filename, existing_artist, existing_title,
+            entry: Dict with path (must be Path object), filename, existing_artist, existing_title,
                    suggested_artist, suggested_title, missing_artist, missing_title.
         """
+        # Ensure path is a Path object (convert string paths for consistency)
+        if isinstance(entry["path"], str):
+            entry["path"] = Path(entry["path"])
+        
         # Add to internal data list
         self._files_data.append(entry)
         
@@ -415,8 +419,11 @@ class FixerTab(QWidget):
         """Remove fixed rows from the table (in reverse order to preserve indices)."""
         # Find row indices that match the fixed paths
         rows_to_remove = []
+        # Convert fixed_paths to set of strings for efficient comparison
+        fixed_paths_str = {str(p) for p in fixed_paths}
         for i, entry in enumerate(self._files_data):
-            if entry["path"] in fixed_paths:
+            # Compare as strings to handle both Path and str entries
+            if str(entry["path"]) in fixed_paths_str:
                 rows_to_remove.append(i)
 
         for row in sorted(rows_to_remove, reverse=True):
