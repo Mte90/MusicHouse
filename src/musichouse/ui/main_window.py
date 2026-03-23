@@ -133,12 +133,20 @@ class ScanWorker(QThread):
                         artist = getattr(audio_file.tag, 'artist', None) if audio_file and audio_file.tag else None
                         title = getattr(audio_file.tag, 'title', None) if audio_file and audio_file.tag else None
                         stat = file_path.stat()
+                        
+                        # Calculate missing flags
+                        missing_artist = 1 if (not artist or (isinstance(artist, str) and artist.strip() == '')) else 0
+                        missing_title = 1 if (not title or (isinstance(title, str) and title.strip() == '')) else 0
+                        needs_fixing = 1 if (missing_artist or missing_title) else 0
                         files_info.append({
                             'path': str(file_path),
                             'size': stat.st_size,
                             'mtime': stat.st_mtime,
                             'artist': artist,
-                            'title': title
+                            'title': title,
+                            'missing_artist': missing_artist,
+                            'missing_title': missing_title,
+                            'needs_fixing': needs_fixing
                         })
                     except Exception:
 
@@ -147,17 +155,14 @@ class ScanWorker(QThread):
                         stat = file_path.stat()
 
                         files_info.append({
-
                             'path': str(file_path),
-
                             'size': stat.st_size,
-
                             'mtime': stat.st_mtime,
-
                             'artist': None,
-
-                            'title': None
-
+                            'title': None,
+                            'missing_artist': 1,
+                            'missing_title': 1,
+                            'needs_fixing': 1
                         })
 
                     if i % 10 == 0 or i == total_files:
