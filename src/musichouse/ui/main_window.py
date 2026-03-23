@@ -528,12 +528,7 @@ class MainWindow(QMainWindow):
             top_artists = self._leaderboard.update_from_artist_counts(artist_counts)
             self._leaderboard_tab.update_leaderboard(top_artists)
             logger.info("Leaderboard updated successfully from cached counts")
-        if self._leaderboard:
-            logger.info("Updating leaderboard from files...")
-            top_artists = self._leaderboard.update_from_files(files)
-            self._leaderboard_tab.update_leaderboard(top_artists)
-            logger.info("Leaderboard updated successfully")
-        
+
         # Update AI tab artist list
         self._ai_tab.load_artists(list(artist_counts.keys()))
         
