@@ -171,6 +171,11 @@ class LeaderboardCache:
         scan_time = time.time()
         
         for info in files_info:
+            # Convert None to NULL for database
+            artist = info.get('artist')
+            title = info.get('title')
+            suggested_artist = info.get('suggested_artist')
+            suggested_title = info.get('suggested_title')
             conn.execute(
                 """INSERT OR REPLACE INTO scan_cache
                    (path, size, mtime, artist, title, scan_time,
@@ -178,12 +183,13 @@ class LeaderboardCache:
                     suggested_artist, suggested_title)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (info['path'], info['size'], info['mtime'],
-                 info.get('artist'), info.get('title'), scan_time,
+                 artist if artist is not None else None,
+                 title if title is not None else None, scan_time,
                  info.get('needs_fixing', 0), info.get('missing_artist', 0),
-                 info.get('missing_title', 0), info.get('suggested_artist'),
-                 info.get('suggested_title'))
+                 info.get('missing_title', 0),
+                 suggested_artist if suggested_artist is not None else None,
+                 suggested_title if suggested_title is not None else None)
             )
-
     def get_changed_files(self, base_path: Path) -> Tuple[list, int, int, int]:
         """Get files that need processing (new or modified).
         
