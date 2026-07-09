@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 src/musichouse/__init__.py
@@ -8,6 +9,7 @@ src/musichouse/error_handling.py
 src/musichouse/leaderboard.py
 src/musichouse/leaderboard_cache.py
 src/musichouse/logging.py
+src/musichouse/main.py
 src/musichouse/parser.py
 src/musichouse/scanner.py
 src/musichouse/tag_writer.py
@@ -20,9 +22,16 @@ src/musichouse.egg-info/entry_points.txt
 src/musichouse.egg-info/requires.txt
 src/musichouse.egg-info/top_level.txt
 tests/test_ai_client.py
+tests/test_config.py
 tests/test_integration.py
 tests/test_leaderboard.py
 tests/test_leaderboard_cache.py
 tests/test_parser.py
+tests/test_progress_bar.py
+tests/test_real_scan_integration.py
 tests/test_scanner.py
 tests/test_tag_writer.py
+tests/test_threading.py
+tests/test_types.py
+tests/test_ui_automation.py
+tests/test_utils.py

@@ -1,6 +1,8 @@
 """AI client for MusicHouse."""
 
 import json
+import socket
+import urllib.error
 import urllib.request
 from typing import Dict, Any, Optional, List
 
@@ -77,13 +79,50 @@ class AIClient:
                 result = json.loads(response.read().decode('utf-8'))
                 return self._extract_result(result)
                 
+        except urllib.error.HTTPError as e:
+            # API returned an error status code (401, 403, 500, etc.)
+            error_msg = f"API error: {e.code} {e.reason}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
+        except TimeoutError as e:
+            # Request timed out
+            error_msg = "Request timed out after 30s"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
+        except socket.timeout as e:
+            # Socket timeout
+            error_msg = "Request timed out after 30s"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            # Network errors (connection refused, DNS failure, etc.)
+            error_msg = f"Network error: {e.reason}" if hasattr(e, 'reason') else f"Network error: {e}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
+        except json.JSONDecodeError as e:
+            # Invalid JSON in API response
+            error_msg = f"Failed to parse AI response: {e}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
         except Exception as e:
-            logger.error(f"API error: {e}")
-            return self._get_fallback_response(prompt)
+            # Catch-all for any other unexpected errors
+            error_msg = f"AI service error: {e}"
+            logger.error(error_msg)
+            return {"error": error_msg}
 
     def _extract_result(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """Extract result from API response."""
         try:
+            if "choices" not in response or not response["choices"]:
+                error_msg = "Failed to parse AI response: no choices in response"
+                logger.error(error_msg)
+                return {"error": error_msg}
+                
             content = response["choices"][0]["message"]["content"]
             # Find JSON in response (handle both objects {} and arrays [])
             start_obj = content.find('{')
@@ -97,10 +136,20 @@ class AIClient:
             # Try array
             elif start_arr >= 0 and end_arr > start_arr:
                 return json.loads(content[start_arr:end_arr])
-            return {"error": "Parse failed"}
-        except Exception as e:
-            logger.error(f"Response parse error: {e}")
-            return {"error": str(e)}
+            
+            error_msg = "Failed to parse AI response: no valid JSON found"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"Failed to parse AI response: {e}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+            
+        except (KeyError, IndexError) as e:
+            error_msg = f"Failed to parse AI response: {e}"
+            logger.error(error_msg)
+            return {"error": error_msg}
 
     def _get_fallback_response(self, prompt: str) -> Dict[str, Any]:
         """Generate fallback response when API fails."""

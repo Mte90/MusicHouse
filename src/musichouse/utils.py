@@ -40,6 +40,7 @@ def load_mp3_safely(file_path: Path) -> Optional["eyed3.AudioFile"]:
     Returns:
         AudioFile object on success, None if file cannot be loaded.
     """
+    result = None
     try:
         stderr_capture = io.StringIO()
         old_stderr = sys.stderr

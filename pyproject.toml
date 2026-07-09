@@ -21,7 +21,7 @@ test = [
 ]
 
 [project.scripts]
-musichouse = "main:main"
+musichouse = "musichouse.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

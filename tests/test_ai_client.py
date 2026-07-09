@@ -74,14 +74,14 @@ class TestInferTags:
         mock_urlopen.assert_called_once()
 
     def test_infer_tags_with_api_failure(self, ai_client_with_key):
-        """Test infer_tags falls back when API fails."""
+        """Test infer_tags returns error message when API fails."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection error")
 
             result = ai_client_with_key.infer_tags("Some File.mp3")
 
-            assert result["artist"] == "Unknown"
-            assert result["title"] == "Unknown"
+            assert "error" in result
+            assert "AI service error" in result["error"]
 
 
 # ============================================================================
@@ -135,13 +135,14 @@ class TestGetSimilarArtists:
         mock_urlopen.assert_called_once()
 
     def test_get_similar_artists_with_api_failure(self, ai_client_with_key):
-        """Test get_similar_artists falls back when API fails."""
+        """Test get_similar_artists returns error when API fails."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("API error")
 
             result = ai_client_with_key.get_similar_artists("Some Artist")
 
-            assert result == ["Unknown Artist"]
+            # Returns [] because result is {"error": "..."} and .get("artists", []) returns []
+            assert result == []
 
 
 # ============================================================================
@@ -180,13 +181,14 @@ class TestGetArtistGenres:
         mock_urlopen.assert_called_once()
 
     def test_get_artist_genres_with_api_failure(self, ai_client_with_key):
-        """Test get_artist_genres falls back when API fails."""
+        """Test get_artist_genres returns error when API fails."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("API error")
 
             result = ai_client_with_key.get_artist_genres("Some Artist")
 
-            assert result == ["Unknown Genre"]
+            # Returns [] because result is {"error": "..."} and .get("genres", []) returns []
+            assert result == []
 
 
 # ============================================================================
@@ -218,36 +220,38 @@ class TestFallbackApiFailure:
     """Tests for fallback behavior when API call fails."""
 
     def test_infer_tags_api_error(self, ai_client_with_key):
-        """Test infer_tags fallback on API error."""
+        """Test infer_tags returns error message on API error."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection timeout")
             
             result = ai_client_with_key.infer_tags("file.mp3")
-            assert result == {"artist": "Unknown", "title": "Unknown"}
+            assert "error" in result
+            assert "AI service error" in result["error"]
 
     def test_get_similar_artists_api_error(self, ai_client_with_key):
-        """Test get_similar_artists fallback on API error."""
+        """Test get_similar_artists returns error on API error."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection timeout")
             
             result = ai_client_with_key.get_similar_artists("Artist")
-            assert result == ["Unknown Artist"]
+            assert result == []
 
     def test_get_artist_genres_api_error(self, ai_client_with_key):
-        """Test get_artist_genres fallback on API error."""
+        """Test get_artist_genres returns error on API error."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection timeout")
             
             result = ai_client_with_key.get_artist_genres("Artist")
-            assert result == ["Unknown Genre"]
+            assert result == []
 
     def test_api_connection_refused(self, ai_client_with_key):
-        """Test fallback on connection refused."""
+        """Test returns error message on connection refused."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = ConnectionRefusedError("Connection refused")
             
             result = ai_client_with_key.infer_tags("file.mp3")
-            assert result == {"artist": "Unknown", "title": "Unknown"}
+            assert "error" in result
+            assert "Network error" in result["error"]
 
 
 # ============================================================================
@@ -326,20 +330,21 @@ class TestTimeoutHandling:
     """Tests for timeout handling in API calls."""
 
     def test_timeout_error(self, ai_client_with_key):
-        """Test fallback on timeout error."""
+        """Test returns timeout error message."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = TimeoutError("Request timed out")
             
             result = ai_client_with_key.infer_tags("file.mp3")
-            assert result == {"artist": "Unknown", "title": "Unknown"}
+            assert "error" in result
+            assert "Request timed out after 30s" in result["error"]
 
     def test_socket_timeout(self, ai_client_with_key):
-        """Test fallback on socket timeout."""
+        """Test returns timeout error message on socket timeout."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = socket.timeout("Socket timeout")
             
             result = ai_client_with_key.get_similar_artists("Artist")
-            assert result == ["Unknown Artist"]
+            assert result == []
 
 
 # ============================================================================

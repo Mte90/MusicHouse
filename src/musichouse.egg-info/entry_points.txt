@@ -1,2 +1,2 @@
 [console_scripts]
-musichouse = main:main
+musichouse = musichouse.main:main

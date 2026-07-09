@@ -4,14 +4,17 @@ Version: 0.0.0
 Summary: MP3 metadata fixer and AI artist suggestions tool
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
+License-File: LICENSE
 Requires-Dist: PyQt6>=6.5.0
 Requires-Dist: eyed3>=0.9.0
 Provides-Extra: test
 Requires-Dist: pytest>=7.0.0; extra == "test"
 Requires-Dist: pytest-qt>=4.2.0; extra == "test"
 Requires-Dist: pytest-cov>=4.0.0; extra == "test"
+Dynamic: license-file
 
 # musichouse
+[![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](http://www.gnu.org/licenses/gpl-3.0)   
 
 MP3 metadata fixer and AI artist suggestions tool.
 
@@ -23,17 +26,15 @@ MP3 metadata fixer and AI artist suggestions tool.
 - AI suggestions for similar artists (OpenAI-compatible API)
 - Artist leaderboard with caching
 
+<img width="815" height="639" alt="Image" src="https://github.com/user-attachments/assets/d8e76e40-c708-498e-b34e-4f0a20d8b249" />
+<img width="815" height="639" alt="Image" src="https://github.com/user-attachments/assets/c5c43262-beac-4a38-8446-3e6b873c3f1a" />
+<img width="815" height="639" alt="Image" src="https://github.com/user-attachments/assets/4059afa4-6526-4dc1-8a27-651538b73444" />
+
 ## Requirements
 
 - Python 3.10+
 - PyQt6
 - eyed3
-
-## Installation
-
-```bash
-pip3.12 install -e .
-```
 
 ## Usage
 

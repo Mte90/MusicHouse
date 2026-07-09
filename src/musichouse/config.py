@@ -1,6 +1,8 @@
 """Configuration management for MusicHouse."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 from PyQt6.QtCore import QStandardPaths
@@ -76,9 +78,21 @@ def save_config(config: Dict[str, Any]) -> None:
     config_path = get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write config
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
+    # Atomic write: write to temp file, then rename
+    config_dir = config_path.parent
+    temp_fd, temp_path = tempfile.mkstemp(
+        suffix=".tmp", prefix="config_", dir=config_dir
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        # Atomic rename on most filesystems
+        os.replace(temp_path, config_path)
+    except Exception:
+        # Clean up temp file on failure
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
 
 
 # Convenience functions

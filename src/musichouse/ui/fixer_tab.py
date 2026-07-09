@@ -63,9 +63,10 @@ class FixerTab(QWidget):
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
-        # Table widget
+        # Table widget - sorting DISABLED to prevent data corruption
+        # When sorting is enabled, visual row indices don't match _files_data indices,
+        # causing tags to be written to wrong files (critical bug)
         self._table = QTableWidget()
-        self._table.setSortingEnabled(True)
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["", "File", "Artist", "Title"])
         self._table.horizontalHeader().setSectionResizeMode(
@@ -85,6 +86,9 @@ class FixerTab(QWidget):
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellChanged.connect(self._on_cell_changed)
         self._table.setAlternatingRowColors(True)
+        # CRITICAL: Disable sorting to prevent row index mismatch bug
+        self._table.setSortingEnabled(False)
+        
         layout.addWidget(self._table)
 
         # Button layout
@@ -426,10 +430,11 @@ class FixerTab(QWidget):
             if str(entry["path"]) in fixed_paths_str:
                 rows_to_remove.append(i)
 
-        for row in sorted(rows_to_remove, reverse=True):
-            del self._files_data[row]
+        # Remove from _files_data in reverse order to preserve indices
+        for data_index in sorted(rows_to_remove, reverse=True):
+            del self._files_data[data_index]
 
-        # Rebuild the table
+        # Rebuild the table (proxy model will handle sorting automatically)
         self._table.setRowCount(0)
         for entry in self._files_data:
             self._add_row_to_table(entry)

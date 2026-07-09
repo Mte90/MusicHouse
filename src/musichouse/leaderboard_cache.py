@@ -38,7 +38,8 @@ class LeaderboardCache:
         missing_artist INTEGER DEFAULT 0,
         missing_title INTEGER DEFAULT 0,
         suggested_artist TEXT,
-        suggested_title TEXT
+        suggested_title TEXT,
+        tag_data TEXT
     );
     
     CREATE INDEX IF NOT EXISTS idx_artists_count ON artists(count DESC);
@@ -51,11 +52,15 @@ class LeaderboardCache:
         Args:
             cache_path: Path to SQLite database file or directory.
         """
+        from pathlib import Path
+        
         if cache_path is None:
             from musichouse import config
             cache_path = config.get_config_dir() / "leaderboard.db"
-        elif cache_path.is_dir():
-            cache_path = cache_path / "leaderboard.db"
+        else:
+            cache_path = Path(cache_path) if isinstance(cache_path, str) else cache_path
+            if cache_path.is_dir():
+                cache_path = cache_path / "leaderboard.db"
         
         self.cache_path = cache_path
         self._local = threading.local()  # Thread-local connections
@@ -136,15 +141,22 @@ class LeaderboardCache:
             path: File path string.
             
         Returns:
-            Dict with size, mtime, artist, title if cached, None otherwise.
+            Dict with size, mtime, artist, title, tag_data if cached, None otherwise.
         """
         conn = self._get_connection()
         cursor = conn.execute(
-            "SELECT path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title FROM scan_cache WHERE path = ?",
+            "SELECT path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title, tag_data FROM scan_cache WHERE path = ?",
             (path,)
         )
         row = cursor.fetchone()
         if row:
+            import json
+            tag_data = None
+            if row['tag_data']:
+                try:
+                    tag_data = json.loads(row['tag_data'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
             return {
                 'path': row['path'],
                 'size': row['size'],
@@ -154,7 +166,8 @@ class LeaderboardCache:
                 'scan_time': row['scan_time'],
                 'needs_fixing': row['needs_fixing'],
                 'missing_artist': row['missing_artist'],
-                'missing_title': row['missing_title']
+                'missing_title': row['missing_title'],
+                'tag_data': tag_data
             }
         return None
 
@@ -164,10 +177,11 @@ class LeaderboardCache:
         Args:
             files_info: List of dicts with path, size, mtime, artist, title,
                         needs_fixing, missing_artist, missing_title,
-                        suggested_artist, suggested_title.
+                        suggested_artist, suggested_title, tag_data.
         """
         conn = self._get_connection()
         import time
+        import json
         scan_time = time.time()
         
         for info in files_info:
@@ -176,19 +190,30 @@ class LeaderboardCache:
             title = info.get('title')
             suggested_artist = info.get('suggested_artist')
             suggested_title = info.get('suggested_title')
+            tag_data = info.get('tag_data')
+            
+            # Serialize tag_data to JSON if present
+            tag_data_json = None
+            if tag_data is not None:
+                try:
+                    tag_data_json = json.dumps(tag_data)
+                except (TypeError, ValueError):
+                    pass
+            
             conn.execute(
                 """INSERT OR REPLACE INTO scan_cache
                    (path, size, mtime, artist, title, scan_time,
                     needs_fixing, missing_artist, missing_title,
-                    suggested_artist, suggested_title)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    suggested_artist, suggested_title, tag_data)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (info['path'], info['size'], info['mtime'],
                  artist if artist is not None else None,
                  title if title is not None else None, scan_time,
                  info.get('needs_fixing', 0), info.get('missing_artist', 0),
                  info.get('missing_title', 0),
                  suggested_artist if suggested_artist is not None else None,
-                 suggested_title if suggested_title is not None else None)
+                 suggested_title if suggested_title is not None else None,
+                 tag_data_json)
             )
     def get_changed_files(self, base_path: Path) -> Tuple[list, int, int, int]:
         """Get files that need processing (new or modified).
@@ -230,7 +255,8 @@ class LeaderboardCache:
                         new_count += 1
                     elif cached['size'] != size or cached['mtime'] != mtime:
                         # Modified file - check if it needs fixing
-                        needs_fixing = self._check_needs_fixing(file_path)
+                        # Pass cached info to avoid reloading if tag_data exists
+                        needs_fixing = self._check_needs_fixing(file_path, cached)
                         if needs_fixing:
                             changed_files.append(file_path)
                             modified_count += 1
@@ -248,17 +274,26 @@ class LeaderboardCache:
         
         return changed_files, new_count, modified_count, skipped_count
 
-    def _check_needs_fixing(self, file_path: Path) -> bool:
+    def _check_needs_fixing(self, file_path: Path, cached_info: Optional[Dict] = None) -> bool:
         """Check if a file needs fixing by verifying ID3 tag correctness.
         
         Args:
             file_path: Path to the MP3 file.
+            cached_info: Optional cached info with tag_data to avoid reload.
             
         Returns:
             True if file is missing required tags (artist or title),
             or if file cannot be read (corrupted/invalid MP3).
             False if file has valid tags (artist and title are set).
         """
+        # Use cached tag data if available - avoids redundant eyed3.load()
+        if cached_info and cached_info.get('tag_data'):
+            tag_data = cached_info['tag_data']
+            existing_artist = tag_data.get('artist', '') or ''
+            existing_title = tag_data.get('title', '') or ''
+            return not existing_artist or not existing_title
+        
+        # Fallback to loading file if no cached tag data
         try:
             audiofile = load_mp3_safely(file_path)
             if audiofile is None or audiofile.tag is None:

@@ -91,8 +91,9 @@ class SettingsDialog(QtWidgets.QDialog):
 
         url_pattern = re.compile(
             r'^https?://'  # http:// or https://
-            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+'  # domain
-            r'(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain name
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+'  # domain with dots
+            r'(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # TLD required for multi-part domains
+            r'[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?|'  # single hostname (e.g., my-nas)
             r'localhost|'  # localhost
             r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # IP
             r'(?::\d+)?'  # optional port

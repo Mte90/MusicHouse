@@ -27,26 +27,45 @@ class Leaderboard:
         self._top_artists = self._cache.get_all_artists()
 
     def update_from_files(self, files: List[Path]) -> List[Tuple[str, int]]:
-        """Update leaderboard from a list of MP3 files."""
+        """Update leaderboard from a list of MP3 files.
+        
+        Uses cached tag data from scan_cache to avoid redundant eyed3.load() calls.
+        """
         artists = []
-
-        for file_path in files:
-            try:
-                audiofile = load_mp3_safely(file_path)
-                if audiofile and audiofile.tag:
-                    artist = audiofile.tag.artist or ""
-                    if artist:
-                        artists.append(artist)
-            except Exception as e:
-                logger.error(f"Error scanning {file_path}: {e}")
-
-        counter = Counter(artists)
-        self._top_artists = counter.most_common(10)
-
-        # Update SQLite cache with fresh connection
         cache = leaderboard_cache.LeaderboardCache(self.cache_path)
-        cache.update_artists(dict(counter.most_common()))
-        cache.close()
+
+        try:
+            for file_path in files:
+                path_str = str(file_path)
+                artist = None
+                
+                # Try to get cached tag data first - avoids reloading the file
+                cached_info = cache.get_cached_info(path_str)
+                if cached_info and cached_info.get('tag_data'):
+                    artist = cached_info['tag_data'].get('artist')
+                elif cached_info and cached_info.get('artist'):
+                    # Fallback to cached artist field if tag_data not available
+                    artist = cached_info['artist']
+                
+                # Only load file if no cached data available
+                if not artist:
+                    try:
+                        audiofile = load_mp3_safely(file_path)
+                        if audiofile and audiofile.tag:
+                            artist = audiofile.tag.artist or ""
+                    except Exception as e:
+                        logger.error(f"Error scanning {file_path}: {e}")
+                
+                if artist:
+                    artists.append(artist)
+
+            counter = Counter(artists)
+            self._top_artists = counter.most_common(10)
+
+            # Update SQLite cache with artist counts
+            cache.update_artists(dict(counter.most_common()))
+        finally:
+            cache.close()
         
         return self._top_artists
     

@@ -3,6 +3,7 @@
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
+import eyed3
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
@@ -138,6 +139,15 @@ class ScanWorker(QThread):
                         missing_artist = 1 if (not artist or (isinstance(artist, str) and artist.strip() == '')) else 0
                         missing_title = 1 if (not title or (isinstance(title, str) and title.strip() == '')) else 0
                         needs_fixing = 1 if (missing_artist or missing_title) else 0
+                        
+                        # Store tag data for caching - avoids redundant eyed3.load() calls
+                        tag_data = None
+                        if audio_file and audio_file.tag:
+                            tag_data = {
+                                'artist': artist,
+                                'title': title
+                            }
+                        
                         files_info.append({
                             'path': str(file_path),
                             'size': stat.st_size,
@@ -146,14 +156,20 @@ class ScanWorker(QThread):
                             'title': title,
                             'missing_artist': missing_artist,
                             'missing_title': missing_title,
-                            'needs_fixing': needs_fixing
+                            'needs_fixing': needs_fixing,
+                            'tag_data': tag_data
                         })
+                        
+                        # Track artist counts for leaderboard
+                        if artist and isinstance(artist, str) and artist.strip():
+                            self._artist_counts[artist] = self._artist_counts.get(artist, 0) + 1
+                            
+                            # Emit artist_count_updated signal every 100 files for real-time leaderboard updates
+                            if i % 100 == 0:
+                                self.artist_count_updated.emit(artist, self._artist_counts[artist])
                     except Exception:
-
                         # Include failed files with None values
-
                         stat = file_path.stat()
-
                         files_info.append({
                             'path': str(file_path),
                             'size': stat.st_size,
@@ -164,7 +180,7 @@ class ScanWorker(QThread):
                             'missing_title': 1,
                             'needs_fixing': 1
                         })
-
+                    
                     if i % 10 == 0 or i == total_files:
                         self.progress.emit(f"Reading tags: {i}/{total_files}")
                         self.tag_read_progress.emit(i, total_files)
@@ -589,6 +605,4 @@ class MainWindow(QMainWindow):
             event.accept()
         
         # Cleanup
-        if self._leaderboard:
-            self._leaderboard.reset()
-            self._leaderboard = None
+        self._leaderboard = None
