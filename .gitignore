@@ -9,3 +9,5 @@ __pycache__/
 .opencode
 .pytest_cache
 .coverage
+config.json
+*.db
