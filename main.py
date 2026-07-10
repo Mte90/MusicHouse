@@ -11,9 +11,9 @@ if str(src_path) not in sys.path:
 
 from PyQt6.QtWidgets import QApplication
 from musichouse.ui import MainWindow
-from musichouse import logging
+from musichouse import log_setup
 
-logger = logging.get_logger(__name__)
+logger = log_setup.get_logger(__name__)
 
 
 def main():
