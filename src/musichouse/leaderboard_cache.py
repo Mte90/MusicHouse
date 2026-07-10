@@ -106,7 +106,7 @@ class LeaderboardCache:
             conn.execute(
                 """INSERT INTO artists (name, count) 
                    VALUES (?, ?) 
-                   ON CONFLICT(name) DO UPDATE SET count = count + ?""",
+                   ON CONFLICT(name) DO UPDATE SET count = ?""",
                 (artist, count, count)
             )
 

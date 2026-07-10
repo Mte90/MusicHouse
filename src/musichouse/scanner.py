@@ -8,6 +8,12 @@ from musichouse import logging
 
 logger = logging.get_logger(__name__)
 
+# Directories to skip during scan (hidden and common non-music dirs)
+HIDDEN_DIRS = {
+    '.git', '.Trash', 'node_modules', '__pycache__', '.svn',
+    'vendor', 'dist', 'build'
+}
+
 
 class MP3Scanner:
     """Scans directories recursively for MP3 files."""
@@ -40,6 +46,12 @@ class MP3Scanner:
         
         try:
             for root, dirs, files in os.walk(self.base_path):
+                # Filter out hidden and non-music directories in-place
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith('.') and d not in HIDDEN_DIRS
+                ]
+                
                 # Check for stop request
                 if self._stop_requested:
                     logger.info("Scan stopped by user")

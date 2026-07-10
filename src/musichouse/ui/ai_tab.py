@@ -99,6 +99,12 @@ class AITab(QWidget):
         # Update count label
         self._artist_count_label.setText(f"{len(filtered)} artists found")
 
+    def refresh_ai_client(self) -> None:
+        """Recreate AIClient with fresh config from settings."""
+        logger.info("Refreshing AIClient with updated settings")
+        self._ai_client = AIClient()
+        logger.info(f"New client configured: endpoint={self._ai_client.endpoint}, model={self._ai_client.model}")
+
     def load_artists_from_db(self):
         """Load artists from database on first visit."""
         if self._artists_loaded:

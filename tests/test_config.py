@@ -3,13 +3,22 @@ import json
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+from typing import Optional
 
 from musichouse.config import (
     get_config_dir, get_config_path, load_config, save_config,
     get_endpoint, get_model, get_api_key, get_last_directory,
     set_endpoint, set_model, set_api_key, set_last_directory,
-    DEFAULT_CONFIG
+    DEFAULT_CONFIG, get_api_key_from_keyring, set_api_key_in_keyring,
+    delete_api_key_from_keyring, _reset_keyring_fallback
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_keyring():
+    """Reset keyring fallback before each test."""
+    _reset_keyring_fallback()
+    yield
 
 
 class TestGetConfigDir:
@@ -36,38 +45,62 @@ class TestGetConfigPath:
         assert result.parent.name == "musichouse"
 
 
+class TestKeyringFunctions:
+    """Tests for keyring helper functions."""
+
+    def test_set_and_get_api_key_from_keyring(self):
+        """Test setting and getting API key from keyring."""
+        set_api_key_in_keyring("test-secret-key")
+        assert get_api_key_from_keyring() == "test-secret-key"
+
+    def test_delete_api_key_from_keyring(self):
+        """Test deleting API key from keyring."""
+        set_api_key_in_keyring("test-key")
+        assert get_api_key_from_keyring() == "test-key"
+        delete_api_key_from_keyring()
+        assert get_api_key_from_keyring() is None
+
+    def test_get_api_key_from_keyring_returns_none_when_not_set(self):
+        """Test that get_api_key_from_keyring returns None when not set."""
+        delete_api_key_from_keyring()  # Ensure it's deleted
+        assert get_api_key_from_keyring() is None
+
+
 class TestLoadConfig:
     """Tests for load_config function."""
 
     def test_load_config_with_nonexistent_file(self, tmp_path):
         """Test loading config when file doesn't exist returns defaults."""
         with patch('musichouse.config.get_config_path', return_value=tmp_path / "nonexistent.json"):
-            config = load_config()
-            assert config == DEFAULT_CONFIG.copy()
+            with patch('musichouse.config.get_api_key_from_keyring', return_value=None):
+                config = load_config()
+                assert config == DEFAULT_CONFIG.copy()
 
     def test_load_config_with_valid_file(self, tmp_path):
         """Test loading config from valid file."""
-        config_data = {"endpoint": "http://test.com", "model": "test-model", "api_key": "test-key"}
+        config_data = {"endpoint": "http://test.com", "model": "test-model", "last_directory": "/tmp"}
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data))
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            config = load_config()
-            assert config["endpoint"] == "http://test.com"
-            assert config["model"] == "test-model"
-            assert config["api_key"] == "test-key"
+            with patch('musichouse.config.get_api_key_from_keyring', return_value="test-key"):
+                config = load_config()
+                assert config["endpoint"] == "http://test.com"
+                assert config["model"] == "test-model"
+                assert config["api_key"] == "test-key"
 
     def test_load_config_merges_with_defaults(self, tmp_path):
         """Test that missing keys are filled with defaults."""
-        config_data = {"endpoint": "http://test.com"}  # Missing model and api_key
+        config_data = {"endpoint": "http://test.com"}  # Missing model and last_directory
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data))
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            config = load_config()
-            assert config["endpoint"] == "http://test.com"
-            assert config["model"] == DEFAULT_CONFIG["model"]
-            assert config["api_key"] == DEFAULT_CONFIG["api_key"]
+            with patch('musichouse.config.get_api_key_from_keyring', return_value=None):
+                config = load_config()
+                assert config["endpoint"] == "http://test.com"
+                assert config["model"] == DEFAULT_CONFIG["model"]
+                assert config["api_key"] == DEFAULT_CONFIG["api_key"]
 
     def test_load_config_with_invalid_json(self, tmp_path):
         """Test loading config with invalid JSON returns defaults."""
@@ -75,8 +108,9 @@ class TestLoadConfig:
         config_file.write_text("invalid json content")
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            config = load_config()
-            assert config == DEFAULT_CONFIG.copy()
+            with patch('musichouse.config.get_api_key_from_keyring', return_value=None):
+                config = load_config()
+                assert config == DEFAULT_CONFIG.copy()
 
     def test_load_config_with_io_error(self, tmp_path):
         """Test loading config with IO error returns defaults."""
@@ -86,8 +120,23 @@ class TestLoadConfig:
         # Mock open to raise IOError
         with patch('musichouse.config.get_config_path', return_value=config_file):
             with patch('builtins.open', side_effect=IOError("Test error")):
+                with patch('musichouse.config.get_api_key_from_keyring', return_value=None):
+                    config = load_config()
+                    assert config == DEFAULT_CONFIG.copy()
+
+    def test_load_config_migrates_api_key_from_json(self, tmp_path):
+        """Test that API key in config.json is migrated to keyring."""
+        config_data = {"endpoint": "http://test.com", "model": "test-model", "api_key": "migrate-me"}
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(config_data))
+
+        with patch('musichouse.config.get_config_path', return_value=config_file):
+            with patch('musichouse.config.get_api_key_from_keyring', return_value="migrate-me") as mock_get:
                 config = load_config()
-                assert config == DEFAULT_CONFIG.copy()
+                # API key should be in config (from keyring)
+                assert config["api_key"] == "migrate-me"
+                # Keyring get was called
+                mock_get.assert_called_once()
 
 
 class TestSaveConfig:
@@ -100,11 +149,15 @@ class TestSaveConfig:
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
             with patch('musichouse.config.Path.mkdir'):
-                save_config(config_data)
+                with patch('musichouse.config.set_api_key_in_keyring'):
+                    save_config(config_data)
 
-                assert config_file.exists()
-                saved = json.loads(config_file.read_text())
-                assert saved == config_data
+                    assert config_file.exists()
+                    saved = json.loads(config_file.read_text())
+                    # api_key should NOT be in JSON file
+                    assert "api_key" not in saved
+                    assert saved["endpoint"] == "http://test.com"
+                    assert saved["model"] == "test-model"
 
     def test_save_config_creates_parent_directories(self, tmp_path):
         """Test that save_config creates parent directories."""
@@ -112,10 +165,11 @@ class TestSaveConfig:
         config_file = tmp_path / "subdir" / "config.json"
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            save_config(config_data)
+            with patch('musichouse.config.set_api_key_in_keyring'):
+                save_config(config_data)
 
-            assert config_file.parent.exists()
-            assert config_file.exists()
+                assert config_file.parent.exists()
+                assert config_file.exists()
 
     def test_save_config_missing_required_field(self, tmp_path):
         """Test saving config with missing required field raises ValueError."""
@@ -147,9 +201,9 @@ class TestSaveConfig:
 
         with patch('musichouse.config.get_config_path', return_value=tmp_path / "config.json"):
             with patch('musichouse.config.Path.mkdir'):
-                # Should not raise
-                save_config(config_data)
-                assert config_data["api_key"] == ""
+                with patch('musichouse.config.set_api_key_in_keyring'):
+                    # Should not raise
+                    save_config(config_data)
 
 
 class TestGetters:
@@ -157,44 +211,47 @@ class TestGetters:
 
     def test_get_endpoint(self, tmp_path):
         """Test get_endpoint returns correct value."""
-        config_data = {"endpoint": "http://test.com", "model": "test-model", "api_key": "key"}
+        config_data = {"endpoint": "http://test.com", "model": "test-model", "last_directory": ""}
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data))
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            assert get_endpoint() == "http://test.com"
+            with patch('musichouse.config.get_api_key_from_keyring', return_value="key"):
+                assert get_endpoint() == "http://test.com"
 
     def test_get_model(self, tmp_path):
         """Test get_model returns correct value."""
-        config_data = {"endpoint": "http://test.com", "model": "test-model", "api_key": "key"}
+        config_data = {"endpoint": "http://test.com", "model": "test-model", "last_directory": ""}
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data))
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            assert get_model() == "test-model"
+            with patch('musichouse.config.get_api_key_from_keyring', return_value="key"):
+                assert get_model() == "test-model"
 
     def test_get_api_key(self, tmp_path):
         """Test get_api_key returns correct value."""
-        config_data = {"endpoint": "http://test.com", "model": "test-model", "api_key": "secret-key"}
+        config_data = {"endpoint": "http://test.com", "model": "test-model", "last_directory": ""}
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data))
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            assert get_api_key() == "secret-key"
+            with patch('musichouse.config.get_api_key_from_keyring', return_value="secret-key"):
+                assert get_api_key() == "secret-key"
 
     def test_get_last_directory(self, tmp_path):
         """Test get_last_directory returns correct value."""
         config_data = {
             "endpoint": "http://test.com",
             "model": "test-model",
-            "api_key": "key",
             "last_directory": "/path/to/music"
         }
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(config_data))
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            assert get_last_directory() == "/path/to/music"
+            with patch('musichouse.config.get_api_key_from_keyring', return_value="key"):
+                assert get_last_directory() == "/path/to/music"
 
     def test_getters_with_defaults(self, tmp_path):
         """Test getters return defaults when config missing keys."""
@@ -202,10 +259,11 @@ class TestGetters:
         config_file.write_text("{}")
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
-            assert get_endpoint() == DEFAULT_CONFIG["endpoint"]
-            assert get_model() == DEFAULT_CONFIG["model"]
-            assert get_api_key() == DEFAULT_CONFIG["api_key"]
-            assert get_last_directory() == ""
+            with patch('musichouse.config.get_api_key_from_keyring', return_value=None):
+                assert get_endpoint() == DEFAULT_CONFIG["endpoint"]
+                assert get_model() == DEFAULT_CONFIG["model"]
+                assert get_api_key() == DEFAULT_CONFIG["api_key"]
+                assert get_last_directory() == ""
 
 
 class TestSetters:
@@ -217,10 +275,11 @@ class TestSetters:
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
             with patch('musichouse.config.Path.mkdir'):
-                set_endpoint("http://new-endpoint.com")
+                with patch('musichouse.config.set_api_key_in_keyring'):
+                    set_endpoint("http://new-endpoint.com")
 
-                saved = json.loads(config_file.read_text())
-                assert saved["endpoint"] == "http://new-endpoint.com"
+                    saved = json.loads(config_file.read_text())
+                    assert saved["endpoint"] == "http://new-endpoint.com"
 
     def test_set_model(self, tmp_path):
         """Test set_model saves correctly."""
@@ -228,10 +287,11 @@ class TestSetters:
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
             with patch('musichouse.config.Path.mkdir'):
-                set_model("new-model")
+                with patch('musichouse.config.set_api_key_in_keyring'):
+                    set_model("new-model")
 
-                saved = json.loads(config_file.read_text())
-                assert saved["model"] == "new-model"
+                    saved = json.loads(config_file.read_text())
+                    assert saved["model"] == "new-model"
 
     def test_set_api_key(self, tmp_path):
         """Test set_api_key saves correctly."""
@@ -239,10 +299,14 @@ class TestSetters:
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
             with patch('musichouse.config.Path.mkdir'):
-                set_api_key("new-secret-key")
+                with patch('musichouse.config.set_api_key_in_keyring') as mock_set:
+                    set_api_key("new-secret-key")
 
-                saved = json.loads(config_file.read_text())
-                assert saved["api_key"] == "new-secret-key"
+                    # api_key should NOT be in JSON file
+                    saved = json.loads(config_file.read_text())
+                    assert "api_key" not in saved
+                    # But it should be called on keyring
+                    mock_set.assert_called_with("new-secret-key")
 
     def test_set_last_directory(self, tmp_path):
         """Test set_last_directory saves correctly."""
@@ -250,7 +314,8 @@ class TestSetters:
 
         with patch('musichouse.config.get_config_path', return_value=config_file):
             with patch('musichouse.config.Path.mkdir'):
-                set_last_directory("/new/music/path")
+                with patch('musichouse.config.set_api_key_in_keyring'):
+                    set_last_directory("/new/music/path")
 
-                saved = json.loads(config_file.read_text())
-                assert saved["last_directory"] == "/new/music/path"
+                    saved = json.loads(config_file.read_text())
+                    assert saved["last_directory"] == "/new/music/path"

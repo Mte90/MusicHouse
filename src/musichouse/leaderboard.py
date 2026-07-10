@@ -32,40 +32,37 @@ class Leaderboard:
         Uses cached tag data from scan_cache to avoid redundant eyed3.load() calls.
         """
         artists = []
-        cache = leaderboard_cache.LeaderboardCache(self.cache_path)
+        cache = self._cache
 
-        try:
-            for file_path in files:
-                path_str = str(file_path)
-                artist = None
-                
-                # Try to get cached tag data first - avoids reloading the file
-                cached_info = cache.get_cached_info(path_str)
-                if cached_info and cached_info.get('tag_data'):
-                    artist = cached_info['tag_data'].get('artist')
-                elif cached_info and cached_info.get('artist'):
-                    # Fallback to cached artist field if tag_data not available
-                    artist = cached_info['artist']
-                
-                # Only load file if no cached data available
-                if not artist:
-                    try:
-                        audiofile = load_mp3_safely(file_path)
-                        if audiofile and audiofile.tag:
-                            artist = audiofile.tag.artist or ""
-                    except Exception as e:
-                        logger.error(f"Error scanning {file_path}: {e}")
-                
-                if artist:
-                    artists.append(artist)
+        for file_path in files:
+            path_str = str(file_path)
+            artist = None
+            
+            # Try to get cached tag data first - avoids reloading the file
+            cached_info = cache.get_cached_info(path_str)
+            if cached_info and cached_info.get('tag_data'):
+                artist = cached_info['tag_data'].get('artist')
+            elif cached_info and cached_info.get('artist'):
+                # Fallback to cached artist field if tag_data not available
+                artist = cached_info['artist']
+            
+            # Only load file if no cached data available
+            if not artist:
+                try:
+                    audiofile = load_mp3_safely(file_path)
+                    if audiofile and audiofile.tag:
+                        artist = audiofile.tag.artist or ""
+                except Exception as e:
+                    logger.error(f"Error scanning {file_path}: {e}")
+            
+            if artist:
+                artists.append(artist)
 
-            counter = Counter(artists)
-            self._top_artists = counter.most_common(10)
+        counter = Counter(artists)
+        self._top_artists = counter.most_common(10)
 
-            # Update SQLite cache with artist counts
-            cache.update_artists(dict(counter.most_common()))
-        finally:
-            cache.close()
+        # Update SQLite cache with artist counts
+        cache.update_artists(dict(counter.most_common()))
         
         return self._top_artists
     
@@ -83,10 +80,8 @@ class Leaderboard:
             reverse=True
         )
         
-        # Update SQLite cache with fresh connection
-        cache = leaderboard_cache.LeaderboardCache(self.cache_path)
-        cache.update_artists(artist_counts)
-        cache.close()
+        # Update SQLite cache using existing connection
+        self._cache.update_artists(artist_counts)
         
         return self._top_artists
 
@@ -96,10 +91,7 @@ class Leaderboard:
 
     def reset(self) -> None:
         """Reset the leaderboard and clear cache."""
-        # Clear cache with fresh connection
-        cache = leaderboard_cache.LeaderboardCache(self.cache_path)
-        cache.clear()
-        cache.close()
+        self._cache.clear()
 
     def __del__(self):
         """Cleanup database connection."""

@@ -4,9 +4,18 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from PyQt6.QtCore import QStandardPaths
 
+import keyring
+from keyring.errors import PasswordDeleteError
+
+# Keyring configuration
+SERVICE_NAME = "MusicHouse"
+API_KEY_USERNAME = "api_key"
+
+# Fallback storage for when keyring is unavailable
+_fallback_api_key: Optional[str] = None
 
 # Default configuration values
 DEFAULT_CONFIG = {
@@ -34,30 +43,121 @@ def get_config_path() -> Path:
     return get_config_dir() / "config.json"
 
 
-def load_config() -> Dict[str, Any]:
-    """Load configuration from config.json.
+def get_api_key_from_keyring() -> Optional[str]:
+    """Get API key from OS keyring.
     
-    Returns config dict with default values for missing keys.
+    Returns:
+        API key string if found, None otherwise.
+    """
+    # Check fallback first
+    if _fallback_api_key is not None:
+        return _fallback_api_key
+    
+    try:
+        return keyring.get_password(SERVICE_NAME, API_KEY_USERNAME)
+    except Exception:
+        # Keyring might not be available (e.g., headless system)
+        return None
+
+
+def set_api_key_in_keyring(key: str) -> None:
+    """Store API key in OS keyring.
+    
+    Args:
+        key: API key to store.
+    """
+    global _fallback_api_key
+    try:
+        keyring.set_password(SERVICE_NAME, API_KEY_USERNAME, key)
+        _fallback_api_key = key
+    except Exception as e:
+        # Fallback to in-memory storage if keyring is unavailable
+        # This happens in headless environments or when keyring is locked
+        _fallback_api_key = key
+
+
+def delete_api_key_from_keyring() -> None:
+    """Delete API key from OS keyring."""
+    global _fallback_api_key
+    try:
+        keyring.delete_password(SERVICE_NAME, API_KEY_USERNAME)
+    except PasswordDeleteError:
+        # Key doesn't exist, which is fine
+        pass
+    _fallback_api_key = None
+
+
+def _reset_keyring_fallback() -> None:
+    """Reset the keyring fallback (for testing)."""
+    global _fallback_api_key
+    _fallback_api_key = None
+
+
+def _migrate_api_key_from_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Migrate API key from config.json to keyring.
+    
+    If api_key exists in config and is non-empty, move it to keyring
+    and remove it from config dict.
+    
+    Args:
+        config: Configuration dict loaded from JSON.
+        
+    Returns:
+        Config dict with api_key removed (if migrated).
+    """
+    api_key = config.get("api_key", "")
+    if api_key:
+        # Store in keyring
+        set_api_key_in_keyring(api_key)
+        # Remove from config dict
+        config = config.copy()
+        del config["api_key"]
+    return config
+
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from config.json and keyring.
+    
+    API key is retrieved from keyring. Other config values come from config.json.
+    If API key exists in config.json (migration case), it's moved to keyring.
+    
+    Returns:
+        Config dict with default values for missing keys.
     """
     config_path = get_config_path()
 
     if not config_path.exists():
-        return DEFAULT_CONFIG.copy()
+        config = DEFAULT_CONFIG.copy()
+    else:
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
 
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+            # Merge with defaults for missing keys
+            merged = DEFAULT_CONFIG.copy()
+            merged.update(config)
+            config = merged
 
-        # Merge with defaults for missing keys
-        merged = DEFAULT_CONFIG.copy()
-        merged.update(config)
-        return merged
-    except (json.JSONDecodeError, IOError):
-        return DEFAULT_CONFIG.copy()
+            # Migrate API key from JSON to keyring if present
+            config = _migrate_api_key_from_config(config)
+        except (json.JSONDecodeError, IOError):
+            config = DEFAULT_CONFIG.copy()
+
+    # Get API key from keyring
+    api_key = get_api_key_from_keyring()
+    if api_key is not None:
+        config["api_key"] = api_key
+    else:
+        config["api_key"] = DEFAULT_CONFIG["api_key"]
+
+    return config
 
 
 def save_config(config: Dict[str, Any]) -> None:
-    """Save configuration to config.json.
+    """Save configuration to config.json and keyring.
+    
+    API key is stored in keyring, not in config.json.
+    Other config values (endpoint, model, last_directory) are saved to config.json.
     
     Args:
         config: Configuration dict with endpoint, model, api_key.
@@ -78,6 +178,16 @@ def save_config(config: Dict[str, Any]) -> None:
     config_path = get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Store API key in keyring
+    set_api_key_in_keyring(config["api_key"])
+
+    # Create config dict without api_key for JSON storage
+    config_for_json = {
+        "endpoint": config["endpoint"],
+        "model": config["model"],
+        "last_directory": config.get("last_directory", ""),
+    }
+
     # Atomic write: write to temp file, then rename
     config_dir = config_path.parent
     temp_fd, temp_path = tempfile.mkstemp(
@@ -85,7 +195,7 @@ def save_config(config: Dict[str, Any]) -> None:
     )
     try:
         with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+            json.dump(config_for_json, f, indent=2)
         # Atomic rename on most filesystems
         os.replace(temp_path, config_path)
     except Exception:

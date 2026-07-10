@@ -472,6 +472,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         """Open settings dialog."""
         dialog = SettingsDialog(self)
+        dialog.settings_saved.connect(self._ai_tab.refresh_ai_client)
         dialog.exec()
         logger.info("Settings opened")
     
@@ -597,7 +598,25 @@ class MainWindow(QMainWindow):
             )
             
             if reply == QMessageBox.StandardButton.Yes:
-                self._stop_scan()
+                # Signal the worker to stop
+                self._scan_worker.stop()
+                
+                # Wait for the worker thread to finish with a timeout
+                # Use QThread::wait() with timeout to prevent indefinite blocking
+                timeout_ms = 5000  # 5 seconds timeout
+                self._scan_worker.wait(timeout_ms)
+                
+                # Clean up the worker regardless of whether it finished
+                self._scan_worker = None
+                self._is_scanning = False
+                
+                # Reset UI elements
+                self._scan_btn.setEnabled(True)
+                self._pause_btn.setEnabled(False)
+                self._pause_btn.setText("Pause")
+                self._status_label.setText("Scan stopped")
+                logger.info("Scan stopped during window close")
+                
                 event.accept()
             else:
                 event.ignore()

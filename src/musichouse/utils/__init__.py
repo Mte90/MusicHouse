@@ -1,4 +1,4 @@
-"""Utility functions for MusicHouse."""
+"""Utility modules for MusicHouse."""
 
 import sys
 import os
@@ -58,3 +58,8 @@ def load_mp3_safely(file_path: Path) -> Optional["eyed3.AudioFile"]:
     except Exception as e:
         logger.error(f"Error loading MP3 {file_path}: {e}")
         return None
+
+
+from musichouse.utils.lock import SingleInstanceLock
+
+__all__ = ["silence_stderr", "load_mp3_safely", "SingleInstanceLock"]

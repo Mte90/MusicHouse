@@ -115,8 +115,8 @@ class AIClient:
             logger.error(error_msg)
             return {"error": error_msg}
 
-    def _extract_result(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract result from API response."""
+    def _extract_result(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract JSON from LLM response robustly."""
         try:
             if "choices" not in response or not response["choices"]:
                 error_msg = "Failed to parse AI response: no choices in response"
@@ -124,28 +124,34 @@ class AIClient:
                 return {"error": error_msg}
                 
             content = response["choices"][0]["message"]["content"]
-            # Find JSON in response (handle both objects {} and arrays [])
-            start_obj = content.find('{')
-            end_obj = content.rfind('}') + 1
-            start_arr = content.find('[')
-            end_arr = content.rfind(']') + 1
+            
+            # Primary: use raw_decode which properly handles nested JSON
+            decoder = json.JSONDecoder()
+            result, _ = decoder.raw_decode(content)
+            return result
+        except json.JSONDecodeError:
+            # Fallback: try to find JSON-like pattern with regex
+            import re
             
             # Try object first
-            if start_obj >= 0 and end_obj > start_obj:
-                return json.loads(content[start_obj:end_obj])
+            obj_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if obj_match:
+                try:
+                    return json.loads(obj_match.group())
+                except json.JSONDecodeError:
+                    pass
+            
             # Try array
-            elif start_arr >= 0 and end_arr > start_arr:
-                return json.loads(content[start_arr:end_arr])
+            arr_match = re.search(r'\[.*\]', content, re.DOTALL)
+            if arr_match:
+                try:
+                    return json.loads(arr_match.group())
+                except json.JSONDecodeError:
+                    pass
             
             error_msg = "Failed to parse AI response: no valid JSON found"
             logger.error(error_msg)
             return {"error": error_msg}
-            
-        except json.JSONDecodeError as e:
-            error_msg = f"Failed to parse AI response: {e}"
-            logger.error(error_msg)
-            return {"error": error_msg}
-            
         except (KeyError, IndexError) as e:
             error_msg = f"Failed to parse AI response: {e}"
             logger.error(error_msg)

@@ -3,6 +3,7 @@ import re
 from typing import Optional
 
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QValidator
 
 from musichouse.config import get_endpoint, get_model, get_api_key, set_endpoint, set_model, set_api_key
@@ -10,6 +11,8 @@ from musichouse.config import get_endpoint, get_model, get_api_key, set_endpoint
 
 class SettingsDialog(QtWidgets.QDialog):
     """Dialog for configuring API settings."""
+    
+    settings_saved = pyqtSignal()
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         """Initialize the settings dialog."""
@@ -138,6 +141,7 @@ class SettingsDialog(QtWidgets.QDialog):
             set_model(model)
             set_api_key(api_key)
 
+            self.settings_saved.emit()
             self.accept()
             return True
         except Exception:
