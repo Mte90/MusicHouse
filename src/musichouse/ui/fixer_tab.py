@@ -1,6 +1,6 @@
 """Fixer tab for MP3 tag correction in MusicHouse."""
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -133,14 +133,15 @@ class FixerTab(QWidget):
             from musichouse.leaderboard_cache import LeaderboardCache
             
             cache = LeaderboardCache(app_config.get_config_dir())
-            conn = cache.query(
+            conn = cache._get_connection()
+            cursor = conn.execute(
                 """SELECT path, artist, title,
                        needs_fixing, missing_artist, missing_title,
                        suggested_artist, suggested_title
-                 FROM scan_cache
-                WHERE path IN ({})
-                  AND needs_fixing = 1
-                  AND (missing_artist = 1 OR missing_title = 1)""".format(
+                  FROM scan_cache
+                 WHERE path IN ({})
+                   AND needs_fixing = 1
+                   AND (missing_artist = 1 OR missing_title = 1)""".format(
                     ','.join('?' * len(files))
                 ),
                 [str(f) for f in files]
@@ -199,12 +200,13 @@ class FixerTab(QWidget):
             from musichouse.leaderboard_cache import LeaderboardCache
             
             cache = LeaderboardCache(app_config.get_config_dir())
-            cursor = cache.query(
+            conn = cache._get_connection()
+            cursor = conn.execute(
                 """SELECT path, artist, title,
                        needs_fixing, missing_artist, missing_title,
                        suggested_artist, suggested_title
-                 FROM scan_cache
-                WHERE needs_fixing = 1 AND (missing_artist = 1 OR missing_title = 1)"""
+                  FROM scan_cache
+                 WHERE needs_fixing = 1 AND (missing_artist = 1 OR missing_title = 1)"""
             )
             
             self._files_data = []
@@ -381,10 +383,6 @@ class FixerTab(QWidget):
             return entry["missing_artist"] and entry["missing_title"]
         return True
 
-    def _filter_table(self, pattern: str):
-        """Filter table rows by filename."""
-        self._proxy_model.setFilterFixedString(pattern)
-
     def _add_row_to_table(self, entry: Dict):
         """Add a row to the table."""
         row = self._table.rowCount()
@@ -482,7 +480,7 @@ class FixerTab(QWidget):
         # Store fixed paths for DB update
         self._fixed_paths: List[Path] = []
         self._failed_paths: List[Path] = []
-        self._failure_details: List[Tuple[str, str]] = []  # (filename, error_message)
+        # _failure_details is initialized in __init__ with error types
         
         # Update UI
         self._set_buttons_enabled(False)
@@ -522,7 +520,7 @@ class FixerTab(QWidget):
         # Store fixed paths for DB update
         self._fixed_paths: List[Path] = []
         self._failed_paths: List[Path] = []
-        self._failure_details: List[Tuple[str, str]] = []  # (filename, error_message)
+        # _failure_details is initialized in __init__ with error types
         
         # Update UI
         self._set_buttons_enabled(False)

@@ -77,10 +77,18 @@ class TagFixWorker(QThread):
                     logger.info(f"Cached tags match target, skipping write: {file_path.name}")
                 else:
                     # Tags differ - need to write (cache will be updated after)
-                    success = write_tags(file_path, new_artist, new_title, force=True)
+                    try:
+                        success = write_tags(file_path, new_artist, new_title, force=True)
+                    except Exception as e:
+                        success = False
+                        error = e
             else:
                 # No cached tag data - must load file with eyed3
-                success = write_tags(file_path, new_artist, new_title, force=True)
+                try:
+                    success = write_tags(file_path, new_artist, new_title, force=True)
+                except Exception as e:
+                    success = False
+                    error = e
             
             if success:
                 success_count += 1
@@ -98,9 +106,10 @@ class TagFixWorker(QThread):
             else:
                 failure_count += 1
                 self.file_fixed.emit(file_path.name, False)
-                error_msg = f"Failed to write tags to {file_path.name}"
-                failure_list.append((file_path.name, error_msg))
-                logger.error(f"Failed to fix: {file_path.name}")
+                error_type = type(error).__name__
+                error_msg = str(error)
+                failure_list.append((file_path.name, error_type, error_msg))
+                logger.error(f"Failed to fix: {file_path.name} - {error_type}: {error_msg}")
         
         # Emit failures signal with list of failed files
         if failure_list:
