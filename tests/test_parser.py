@@ -172,6 +172,66 @@ class TestParseFilename:
         filename = "mp3"
         result = parse_filename(filename)
         assert result == ("mp3", "mp3")
+
+    def test_track_number_leading_dot(self):
+        """Test track number with dot prefix: '01. Artist - Title.mp3'."""
+        filename = "01. Artist - Title.mp3"
+        result = parse_filename(filename)
+        assert result == ("Artist", "Title")
+
+    def test_track_number_leading_dash(self):
+        """Test track number with dash prefix: '01 - Artist - Title.mp3'."""
+        filename = "01 - Artist - Title.mp3"
+        result = parse_filename(filename)
+        assert result == ("Artist", "Title")
+
+    def test_track_number_middle(self):
+        """Test track number in middle: 'Artist - 01 - Title.mp3'."""
+        filename = "Artist - 01 - Title.mp3"
+        result = parse_filename(filename)
+        assert result == ("Artist", "Title")
+
+    def test_track_number_no_artist(self):
+        """Test track number without artist: '01 Track.mp3'."""
+        filename = "01 Track.mp3"
+        result = parse_filename(filename)
+        assert result == ("", "Track")
+
+    def test_underscore_separator(self):
+        """Test underscore separator: 'Artist_Title.mp3'."""
+        filename = "Artist_Title.mp3"
+        result = parse_filename(filename)
+        assert result == ("Artist", "Title")
+
+    def test_em_dash_separator(self):
+        """Test em-dash separator: 'Artist — Title.mp3' (U+2014)."""
+        filename = "Artist — Title.mp3"
+        result = parse_filename(filename)
+        assert result == ("Artist", "Title")
+
+    def test_unicode_beyonce(self):
+        """Test unicode artist name: 'Beyoncé - Halo.mp3'."""
+        filename = "Beyoncé - Halo.mp3"
+        result = parse_filename(filename)
+        assert result == ("Beyoncé", "Halo")
+
+    def test_unicode_sigur_ros(self):
+        """Test unicode artist name: 'Sigur Rós - Hoppípolla.mp3'."""
+        filename = "Sigur Rós - Hoppípolla.mp3"
+        result = parse_filename(filename)
+        assert result == ("Sigur Rós", "Hoppípolla")
+
+    def test_unicode_bjork(self):
+        """Test unicode artist name: 'Björk - Hyperballad.mp3'."""
+        filename = "Björk - Hyperballad.mp3"
+        result = parse_filename(filename)
+        assert result == ("Björk", "Hyperballad")
+
+    def test_unicode_chinese(self):
+        """Test Chinese characters: '北京 - 歌曲.mp3'."""
+        filename = "北京 - 歌曲.mp3"
+        result = parse_filename(filename)
+        assert result == ("北京", "歌曲")
 # ============================================================================
 # Tests for validate_filename_pattern()
 # ============================================================================
@@ -207,11 +267,10 @@ class TestValidateFilenamePattern:
         """Test invalid pattern (empty title)."""
         filename, expected = sample_validation_cases[4]
         result = validate_filename_pattern(filename)
-        # Note: parser returns space for title, validation considers it non-empty
-        # This is expected behavior - title is " " which passes the empty check
-        assert result[0] is True
-        assert result[1] == "Artist"
-        assert result[2] == " "
+        # Empty title after stripping should be invalid
+        assert result[0] is False
+        assert result[1] == ""
+        assert result[2] == ""
     def test_invalid_empty_string(self, sample_validation_cases):
         """Test invalid pattern (empty string)."""
         filename, expected = sample_validation_cases[5]

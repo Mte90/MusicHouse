@@ -43,10 +43,10 @@ def test_update_artists_update(cache):
     # Act - update same artist
     cache.update_artists({"Artist A": 3})
     
-    # Assert - count should be incremented (5 + 3 = 8)
+    # Assert - count should be replaced with new value
     top = cache.get_top_artists()
     assert len(top) == 1
-    assert ("Artist A", 8) in top
+    assert ("Artist A", 3) in top
 
 
 def test_update_artists_multiple_calls(cache):
@@ -59,7 +59,7 @@ def test_update_artists_multiple_calls(cache):
     # Assert
     top = cache.get_top_artists()
     assert len(top) == 2
-    assert ("Artist A", 7) in top  # 5 + 2
+    assert ("Artist A", 2) in top  # replaced with 2
     assert ("Artist B", 3) in top
 
 
@@ -323,8 +323,8 @@ def test_get_changed_files_new_files(cache, temp_dir):
     test_file.parent.mkdir()
     test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
     
-    # Act
-    changed, new_count, modified_count, skipped = cache.get_changed_files(temp_dir)
+    # Act - pass list of files instead of base path
+    changed, new_count, modified_count, skipped = cache.get_changed_files([test_file])
     
     # Assert
     assert len(changed) == 1
@@ -355,8 +355,8 @@ def test_get_changed_files_modified_files(cache, temp_dir):
     # Modify file
     test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 200)
     
-    # Act
-    changed, new_count, modified_count, skipped = cache.get_changed_files(temp_dir)
+    # Act - pass list of files instead of base path
+    changed, new_count, modified_count, skipped = cache.get_changed_files([test_file])
     
     # Assert
     assert len(changed) == 1
@@ -384,8 +384,8 @@ def test_get_changed_files_unchanged_files(cache, temp_dir):
         }
     ])
     
-    # Act (no modification)
-    changed, new_count, modified_count, skipped = cache.get_changed_files(temp_dir)
+    # Act (no modification) - pass list of files instead of base path
+    changed, new_count, modified_count, skipped = cache.get_changed_files([test_file])
     
     # Assert
     assert len(changed) == 0
@@ -432,8 +432,8 @@ def test_get_changed_files_mixed(cache, temp_dir):
         }
     ])
     
-    # Act
-    changed, new_count, modified_count, skipped = cache.get_changed_files(temp_dir)
+    # Act - pass list of files instead of base path
+    changed, new_count, modified_count, skipped = cache.get_changed_files([new_file, mod_file, unch_file])
     
     # Assert
     assert len(changed) == 2
@@ -443,17 +443,17 @@ def test_get_changed_files_mixed(cache, temp_dir):
 
 
 def test_get_changed_files_non_mp3_ignored(cache, temp_dir):
-    """Test that non-MP3 files are ignored."""
+    """Test that non-MP3 files are processed (filtering is caller's responsibility)."""
     # Create non-MP3 file
     txt_file = temp_dir / "file.txt"
     txt_file.write_text("content")
     
-    # Act
-    changed, new_count, modified_count, skipped = cache.get_changed_files(temp_dir)
+    # Act - pass list of files (non-MP3 filtering happens in MP3Scanner)
+    changed, new_count, modified_count, skipped = cache.get_changed_files([txt_file])
     
-    # Assert
-    assert len(changed) == 0
-    assert new_count == 0
+    # Assert - file is returned (caller should filter)
+    assert len(changed) == 1
+    assert new_count == 1
     assert modified_count == 0
     assert skipped == 0
 
@@ -473,8 +473,8 @@ def test_get_changed_files_recursive(cache, temp_dir):
     file3 = level2 / "level2.mp3"
     file3.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
     
-    # Act
-    changed, new_count, modified_count, skipped = cache.get_changed_files(temp_dir)
+    # Act - pass list of files instead of base path
+    changed, new_count, modified_count, skipped = cache.get_changed_files([file1, file2, file3])
     
     # Assert
     assert len(changed) == 3

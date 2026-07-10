@@ -4,15 +4,10 @@ import os
 from pathlib import Path
 from typing import List, Tuple, Callable, Optional
 
-from musichouse import logging
+from musichouse import log_setup as logging
+from musichouse import config
 
 logger = logging.get_logger(__name__)
-
-# Directories to skip during scan (hidden and common non-music dirs)
-HIDDEN_DIRS = {
-    '.git', '.Trash', 'node_modules', '__pycache__', '.svn',
-    'vendor', 'dist', 'build'
-}
 
 
 class MP3Scanner:
@@ -44,13 +39,16 @@ class MP3Scanner:
         self._errors = []
         self._file_count = 0
         
+        # Get exclude directories from config
+        exclude_dirs = set(config.get_exclude_dirs())
+        # Also add hidden dirs (starting with .) and common non-music dirs
+        hidden_dirs = {'.svn', 'vendor', 'dist', 'build'}
+        all_excluded = exclude_dirs | hidden_dirs
+        
         try:
             for root, dirs, files in os.walk(self.base_path):
-                # Filter out hidden and non-music directories in-place
-                dirs[:] = [
-                    d for d in dirs
-                    if not d.startswith('.') and d not in HIDDEN_DIRS
-                ]
+                # Filter out excluded directories in-place
+                dirs[:] = [d for d in dirs if d not in all_excluded]
                 
                 # Check for stop request
                 if self._stop_requested:

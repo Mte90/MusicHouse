@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 import eyed3
 
+import time
 from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtGui import QAction, QIcon, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QToolBar, QStatusBar, QLabel, QProgressBar,
@@ -14,7 +15,7 @@ from PyQt6.QtWidgets import (
     QStyle
 )
 
-from musichouse import logging
+from musichouse import log_setup as logging
 from musichouse import config
 from musichouse.scanner import MP3Scanner
 from musichouse.leaderboard import Leaderboard
@@ -56,6 +57,7 @@ class ScanWorker(QThread):
         self._leaderboard: Optional[Leaderboard] = None
         self._artist_counts: Dict[str, int] = {}  # Track artist counts for real-time updates
         self._files_found: List[Path] = []
+        self._scan_start_time: float = 0  # For duration tracking
     def run(self) -> None:
         """Execute the scan in worker thread.
         
@@ -64,6 +66,7 @@ class ScanWorker(QThread):
         - THEN reads ID3 tags (slow, shows progress)
         - Uses incremental scanning to skip unchanged files
         """
+        self._scan_start_time = time.perf_counter()
         logger.info(f"Starting scan of {self.base_path}")
         
         try:
@@ -81,19 +84,22 @@ class ScanWorker(QThread):
             self._scanner.set_file_callback(on_file_batch)
             
             # Phase 1: Perform filesystem scan - ONLY finds files, does NOT read tags
+            phase1_start = time.perf_counter()
             self._files_found = self._scanner.scan()
             errors = self._scanner.get_errors()
+            phase1_duration = time.perf_counter() - phase1_start
             
             if errors:
                 for err_path, err_msg in errors:
                     logger.warning(f"Error scanning {err_path}: {err_msg}")
             
-            logger.info(f"Scan complete: {len(self._files_found)} files found")
+            logger.info(f"Filesystem scan complete: {len(self._files_found)} files found ({phase1_duration:.2f}s)")
             
             # Phase 1.5: Incremental filtering - get only changed files
+            # Pass already-scanned files to avoid re-walking directory tree
             from musichouse.leaderboard_cache import LeaderboardCache
             cache = LeaderboardCache()
-            changed_files, new_count, modified_count, skipped_count = cache.get_changed_files(self.base_path)
+            changed_files, new_count, modified_count, skipped_count = cache.get_changed_files(self._files_found)
             
             # Emit scan statistics
             self.scan_stats.emit(new_count, modified_count, skipped_count)
@@ -101,7 +107,8 @@ class ScanWorker(QThread):
             
             # If no files changed, skip tag reading
             if not changed_files:
-                logger.info("No files changed, skipping tag reading")
+                total_duration = time.perf_counter() - self._scan_start_time
+                logger.info(f"No files changed, skipping tag reading (total: {total_duration:.2f}s)")
                 cache.close()
                 self.progress.emit("No changes detected")
                 self.scan_finished.emit([], {})
@@ -128,6 +135,21 @@ class ScanWorker(QThread):
                     if self._stop_requested:
                         logger.info("Scan stopped by user")
                         break
+                    
+                    # Check for pause - block until resumed or stopped
+                    if not self._pause_event.is_set():
+                        logger.debug("Scan PAUSED - blocking on wait()")
+                        # Wait with timeout so we can check stopRequested periodically
+                        while not self._pause_event.is_set():
+                            # Wait with timeout to allow checking stop flag
+                            self._pause_event.wait(timeout=0.1)  # 100ms timeout
+                            if self._stop_requested:
+                                logger.info("Scan stopped while paused")
+                                break
+                        if self._stop_requested:
+                            logger.info("Scan stopped by user after pause")
+                            break
+                        logger.debug("Scan RESUMED - continuing processing")
                     
                     try:
                         audio_file = eyed3.load(str(file_path))
@@ -190,65 +212,54 @@ class ScanWorker(QThread):
                     if i % 10 == 0:
                         import time
                         time.sleep(0.01)  # 10ms sleep every 10 files
-                # Phase 3: Update cache with PROGRESS (batch by batch)
+                # Phase 3: Update cache with bulk insert in single transaction
                 import time
-                batch_size = 100
                 total_cache = len(files_info)
                 conn = cache._get_connection()
                 
-
                 try:
-                    for batch_start in range(0, total_cache, batch_size):
-                        batch_end = min(batch_start + batch_size, total_cache)
-                        batch = files_info[batch_start:batch_end]
-                        
-
-                        # Update this batch
-                        for info in batch:
-                            conn.execute(
-                                """INSERT OR REPLACE INTO scan_cache
-                                   (path, size, mtime, artist, title, scan_time,
-                                    needs_fixing, missing_artist, missing_title,
-                                    suggested_artist, suggested_title)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                (info['path'], info['size'], info['mtime'],
-                                 info.get('artist'), info.get('title'), time.time(),
-                                 info.get('needs_fixing', 0), info.get('missing_artist', 0),
-                                 info.get('missing_title', 0), info.get('suggested_artist'),
-                                 info.get('suggested_title'))
-                            )
-                        
-
-                        # Update progress
-                        current = batch_end
-                        self.progress.emit(f"Updating cache: {current}/{total_cache} entries")
-                        # Total progress: files read + cache updated
-                        total_progress = total_files + current
-                        total_work = total_files + total_cache
-                        self.tag_read_progress.emit(total_progress, total_work)
-                        
-
-                        # Small sleep for UI responsiveness every few batches
-                        if batch_start % 500 == 0 and batch_start > 0:
-                            time.sleep(0.01)
+                    # Bulk insert all cache data in a single transaction
+                    cache_start = time.perf_counter()
+                    cache_data = [(info['path'], info['size'], info['mtime'],
+                                   info.get('artist'), info.get('title'), time.time(),
+                                   info.get('needs_fixing', 0), info.get('missing_artist', 0),
+                                   info.get('missing_title', 0), info.get('suggested_artist'),
+                                   info.get('suggested_title'))
+                                  for info in files_info]
                     
-
-                    logger.info(f"Cache update complete, emitting scan_finished signal")
-                    # Emit scan finished - cache uses autocommit mode so no explicit commit needed
-                    # NOTE: cache.close() removed to avoid blocking on WAL checkpoint
-                    # The thread-local connection will be cleaned up when thread terminates
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO scan_cache
+                           (path, size, mtime, artist, title, scan_time,
+                            needs_fixing, missing_artist, missing_title,
+                            suggested_artist, suggested_title)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        cache_data
+                    )
+                    conn.commit()
+                    cache_duration = time.perf_counter() - cache_start
+                    
+                    # Update progress to show completion
+                    self.progress.emit(f"Updating cache: {total_cache}/{total_cache} entries")
+                    total_progress = total_files + total_cache
+                    total_work = total_files + total_cache
+                    self.tag_read_progress.emit(total_progress, total_work)
+                    
+                    total_duration = time.perf_counter() - self._scan_start_time
+                    logger.info(f"Cache update complete ({cache_duration:.2f}s), emitting scan_finished signal")
                     self.scan_finished.emit(self._files_found, self._artist_counts)
-                    logger.info(f"Scan finished signal emitted, thread will terminate")
+                    logger.info(f"Scan complete: {len(self._files_found)} files, {total_duration:.2f}s total")
                 except Exception as e:
-                    logger.error(f"Error during scan cache update: {e}")
+                    total_duration = time.perf_counter() - self._scan_start_time
+                    logger.error(f"Error during scan cache update: {e} (total: {total_duration:.2f}s)")
                     raise
         except Exception as e:
             logger.error(f"Scan error: {e}")
             self.error.emit(f"Scan failed: {str(e)}")
         finally:
+            total_duration = time.perf_counter() - self._scan_start_time
             self._scanner = None
             self._pause_event.set()  # Ensure thread doesn't block if stopped
-            logger.info("ScanWorker thread cleanup complete")
+            logger.info(f"ScanWorker thread cleanup complete (total: {total_duration:.2f}s)")
     def pause(self) -> None:
         """Pause the scan."""
         logger.debug("Scan PAUSE requested - clearing event")
@@ -310,6 +321,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         
+        # Menu bar
+        self._setup_menubar()
+        
         # Toolbar
         self._setup_toolbar()
         
@@ -322,13 +336,99 @@ class MainWindow(QMainWindow):
         # Tab widget
         self._setup_tabs()
         
+        # Keyboard shortcuts
+        self._setup_shortcuts()
+        
         # Layout
         main_layout.addWidget(self._toolbar_widget)
         main_layout.addWidget(self._status_label)
         main_layout.addWidget(self._progress_bar)
         main_layout.addWidget(self._tab_widget)
+        
+        # Install keyboard shortcuts
+        self._install_shortcuts()
+    
+    def _setup_menubar(self) -> None:
+        """Set up the menu bar."""
+        menubar = self.menuBar()
+        
+        # File menu
+        file_menu = menubar.addMenu("&File")
+        
+        scan_action = QAction("&Scan", self)
+        scan_action.setShortcut("Ctrl+O")
+        scan_action.triggered.connect(self._start_scan)
+        scan_action.setStatusTip("Scan a directory for MP3 files")
+        file_menu.addAction(scan_action)
+        
+        settings_action = QAction("&Settings", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._open_settings)
+        settings_action.setStatusTip("Open settings dialog")
+        file_menu.addAction(settings_action)
+        
+        file_menu.addSeparator()
+        
+        exit_action = QAction("E&xit", self)
+        exit_action.setShortcut("Alt+F4")
+        exit_action.triggered.connect(self.close)
+        exit_action.setStatusTip("Exit application")
+        file_menu.addAction(exit_action)
+        
+        # Edit menu
+        edit_menu = menubar.addMenu("&Edit")
+        
+        stop_action = QAction("&Stop", self)
+        stop_action.setShortcut("Esc")
+        stop_action.triggered.connect(self._stop_scan)
+        stop_action.setStatusTip("Stop current scan")
+        edit_menu.addAction(stop_action)
+        
+        # Help menu
+        help_menu = menubar.addMenu("&Help")
+        
+        about_action = QAction("&About", self)
+        about_action.triggered.connect(self._show_about)
+        about_action.setStatusTip("Show about dialog")
+        help_menu.addAction(about_action)
+    
+    def _setup_shortcuts(self) -> None:
+        """Set up keyboard shortcuts."""
+        # Ctrl+O → scan (also in menu, but add as global shortcut)
+        self._scan_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
+        self._scan_shortcut.activated.connect(self._start_scan)
+        
+        # Esc → stop
+        self._stop_shortcut = QShortcut(QKeySequence("Esc"), self)
+        self._stop_shortcut.activated.connect(self._stop_scan)
+        
+        # Ctrl+, → settings
+        self._settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
+        self._settings_shortcut.activated.connect(self._open_settings)
+    
+    def _show_about(self) -> None:
+        """Show about dialog."""
+        QMessageBox.about(
+            self,
+            "About MusicHouse",
+            "<b>MusicHouse</b><br/>"
+            "MP3 Tag Correction Tool<br/><br/>"
+            "Version 1.0<br/>"
+            "A tool for fixing missing MP3 metadata."
+        )
     
     def _setup_toolbar(self) -> None:
+        """Set up the toolbar."""
+        self._toolbar_widget = QWidget()
+        toolbar_layout = QHBoxLayout(self._toolbar_widget)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Scan button
+        self._scan_btn = QPushButton("Scan")
+        self._scan_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        self._scan_btn.clicked.connect(self._start_scan)
+        self._scan_btn.setToolTip("Scan a directory for MP3 files (Ctrl+O)")
+        toolbar_layout.addWidget(self._scan_btn)
         """Set up the toolbar."""
         self._toolbar_widget = QWidget()
         toolbar_layout = QHBoxLayout(self._toolbar_widget)
@@ -344,6 +444,7 @@ class MainWindow(QMainWindow):
         self._settings_btn = QPushButton("Settings")
         self._settings_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
         self._settings_btn.clicked.connect(self._open_settings)
+        self._settings_btn.setToolTip("Open settings dialog (Ctrl+,)")
         toolbar_layout.addWidget(self._settings_btn)
         
         # Pause/Resume button
@@ -351,13 +452,25 @@ class MainWindow(QMainWindow):
         self._pause_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
         self._pause_btn.clicked.connect(self._toggle_pause)
         self._pause_btn.setEnabled(False)
+        self._pause_btn.setToolTip("Pause the current scan")
         toolbar_layout.addWidget(self._pause_btn)
+        
+        # Stop button
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton))
+        self._stop_btn.clicked.connect(self._stop_scan)
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.setToolTip("Stop the current scan (Esc)")
+        toolbar_layout.addWidget(self._stop_btn)
+        
         toolbar_layout.addStretch()
     
     def _setup_statusbar(self) -> None:
         """Set up the status bar."""
         self._status_label = QLabel("Ready")
-        self._status_label.setFixedHeight(25)
+        # DPI-safe: use minimum height based on font metrics instead of fixed height
+        font_height = self._status_label.fontMetrics().height()
+        self._status_label.setMinimumHeight(font_height + 4)
     
     def _setup_progress_bar(self) -> None:
         """Set up the progress bar."""
@@ -476,6 +589,26 @@ class MainWindow(QMainWindow):
         dialog.exec()
         logger.info("Settings opened")
     
+    def _install_shortcuts(self) -> None:
+        """Install keyboard shortcuts for Ctrl+C, Ctrl+Q, and Ctrl+,"""
+        # Ctrl+C: Stop scan if scanning, otherwise do nothing
+        self._stop_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self._stop_shortcut.activated.connect(self._handle_stop_shortcut)
+        
+        # Ctrl+Q: Close window
+        self._quit_shortcut = QShortcut(QKeySequence("Ctrl+Q"), self)
+        self._quit_shortcut.activated.connect(self.close)
+        
+        # Ctrl+, : Open settings
+        self._settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
+        self._settings_shortcut.activated.connect(self._open_settings)
+    
+    def _handle_stop_shortcut(self) -> None:
+        """Handle Ctrl+C shortcut."""
+        if self._is_scanning:
+            self._stop_scan()
+        # If not scanning, do nothing (ignore the shortcut)
+    
     # Signal handlers (all run in main thread)
     
     def _on_scan_progress(self, message: str) -> None:
@@ -520,6 +653,7 @@ class MainWindow(QMainWindow):
         self._scan_btn.setEnabled(True)
         self._pause_btn.setEnabled(False)
         self._pause_btn.setText("Pause")
+        self._stop_btn.setEnabled(False)
         # Show final status with statistics if available
         if self._scan_stats_summary:
             new_count, modified_count, skipped_count = self._scan_stats_summary
@@ -549,6 +683,17 @@ class MainWindow(QMainWindow):
         # Update AI tab artist list
         self._ai_tab.load_artists(list(artist_counts.keys()))
         
+        # WAL checkpoint on scan completion
+        try:
+            from musichouse.leaderboard_cache import LeaderboardCache
+            cache = LeaderboardCache()
+            conn = cache._get_connection()
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            cache.close()
+            logger.debug("WAL checkpoint completed after scan")
+        except Exception as e:
+            logger.warning(f"WAL checkpoint failed: {e}")
+        
         self._progress_bar.setVisible(False)
         logger.info("Scan completion handler finished - UI should be responsive")
     def _on_artist_count_updated(self, artist: str, count: int) -> None:
@@ -574,6 +719,7 @@ class MainWindow(QMainWindow):
         self._scan_btn.setEnabled(True)
         self._pause_btn.setEnabled(False)
         self._pause_btn.setText("Pause")
+        self._stop_btn.setEnabled(False)
         self._status_label.setText("Error")
         QMessageBox.critical(self, "Scan Error", error_msg)
         self._progress_bar.setVisible(False)

@@ -8,7 +8,15 @@ from typing import Optional
 def parse_filename(filename: str, file_path: Optional[Path] = None) -> tuple[str, str]:
     """Parse MP3 filename to extract artist and title.
     
-    Handles pattern: "artist - title.mp3" with flexible spacing around hyphen.
+    Handles patterns:
+    - "artist - title.mp3" with flexible spacing around hyphen/en-dash/em-dash
+    - "01. Artist - Title.mp3" → strip leading track number + dot
+    - "01 - Artist - Title.mp3" → strip leading track number
+    - "Artist - 01 - Title.mp3" → strip middle track number
+    - "01 Track.mp3" → no artist, title="Track"
+    - "Artist_Title.mp3" → underscore separator
+    - "Artist — Title.mp3" → em-dash separator
+    
     If no hyphen found, uses parent directory name as artist.
     
     Args:
@@ -22,25 +30,52 @@ def parse_filename(filename: str, file_path: Optional[Path] = None) -> tuple[str
     if not filename.lower().endswith('.mp3'):
         return (filename.strip(), filename.strip())
     
-    # Pattern: "artist - title.mp3" with flexible spacing around hyphen or en-dash
-    # Handles both regular hyphen (-) and en-dash (–)
-    match = re.match(r'^(.+?)\s*[-–]\s*(.+\.mp3)$', filename, re.IGNORECASE)
+    # Strip .mp3 extension first for processing
+    name_without_ext = filename[:-4]
+    
+    # Strip leading track number patterns: "01. " or "01 - " or "01 "
+    # Pattern: digits followed by separator (dot/hyphen/em-dash) and optional space
+    stripped_name = name_without_ext
+    leading_track_match = re.match(r'^(\d+)\s*[.\-—]\s+(.+)$', name_without_ext)
+    if leading_track_match:
+        stripped_name = leading_track_match.group(2)
+    
+    # Pattern: "artist - title" with flexible spacing around hyphen/en-dash/em-dash/underscore
+    # Using re.UNICODE for proper unicode character handling
+    match = re.match(r'^(.+?)\s*[-–—_]\s+(.+)$', stripped_name, re.IGNORECASE | re.UNICODE)
     if match:
         artist = match.group(1).strip()
-        title = match.group(2)[:-4]  # Strip .mp3
+        title = match.group(2).strip()
+        # Strip middle track number pattern: "Artist - 01 - Title" → "Artist - Title"
+        middle_track_match = re.match(r'^(.+?)\s*[-–—]\s+\d+\s*[-–—]\s+(.+)$', artist + ' - ' + title, re.UNICODE)
+        if middle_track_match:
+            artist = middle_track_match.group(1).strip()
+            title = middle_track_match.group(2).strip()
         return (artist, title)
     
-    # Fallback: split on first hyphen
-    if '-' in filename:
-        idx = filename.index('-')
-        artist = filename[:idx].strip()
-        title = filename[idx+1:].strip()
-        if title.lower().endswith('.mp3'):
-            title = title[:-4]
-        return (artist, title)
+    # Fallback: split on first hyphen/dash/underscore
+    separators = ['-', '–', '—', '_']
+    for sep in separators:
+        if sep in stripped_name:
+            idx = stripped_name.index(sep)
+            artist = stripped_name[:idx].strip()
+            title = stripped_name[idx+1:].strip()
+            return (artist, title)
+    
+    # Check for track number prefix like "01 Track.mp3" (no hyphen)
+    no_artist_match = re.match(r'^(\d+)\s+(.+)$', stripped_name)
+    if no_artist_match:
+        title = no_artist_match.group(2).strip()
+        if title:
+            # Use folder artist if available, otherwise return empty artist
+            if file_path:
+                folder_artist = get_artist_from_folder(file_path)
+                if folder_artist and folder_artist != "Unknown":
+                    return (folder_artist, title)
+            return ("", title)
     
     # No hyphen found - use parent directory name as artist
-    name = filename[:-4]  # Strip .mp3
+    name = stripped_name
     
     if not name:
         return ("", "")
@@ -72,8 +107,8 @@ def validate_filename_pattern(filename: str) -> tuple[bool, str, str]:
     """
     artist, title = parse_filename(filename)
     
-    # Must have a hyphen in the filename
-    if '-' not in filename:
+    # Must have a hyphen/dash/underscore in the filename
+    if not any(sep in filename for sep in ['-', '–', '—', '_']):
         return (False, "", "")
     
     # Title should not end with .mp3

@@ -2,10 +2,10 @@
 
 import json
 import os
+import platform
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
-from PyQt6.QtCore import QStandardPaths
 
 import keyring
 from keyring.errors import PasswordDeleteError
@@ -17,30 +17,106 @@ API_KEY_USERNAME = "api_key"
 # Fallback storage for when keyring is unavailable
 _fallback_api_key: Optional[str] = None
 
+# Module-level config cache with mtime tracking
+_config_cache: Optional[Dict] = None
+_cache_mtime: Optional[float] = None
+
 # Default configuration values
 DEFAULT_CONFIG = {
     "endpoint": "http://localhost:8080",
     "model": "default",
     "api_key": "",
     "last_directory": "",
+    "exclude_dirs": [".git", "node_modules", ".Trash", "__pycache__"],
 }
 
 
 def get_config_dir() -> Path:
-    """Get the application configuration directory.
+    """Get the application configuration directory without PyQt6 dependency.
     
-    Returns ~/.config/musichouse on Linux.
+    Returns:
+        Path to config directory:
+        - Linux: ~/.config/musichouse
+        - macOS: ~/Library/Application Support/musichouse
+        - Windows: ~/AppData/Roaming/musichouse
     """
-    return Path(
-        QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.ConfigLocation
-        )
-    ) / "musichouse"
+    system = platform.system()
+    
+    if system == "Windows":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    elif system == "Darwin":  # macOS
+        base = Path.home() / "Library" / "Application Support"
+    else:  # Linux and others
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    
+    config_dir = base / "musichouse"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir
 
 
 def get_config_path() -> Path:
     """Get the full path to config.json."""
     return get_config_dir() / "config.json"
+
+
+def _load_config() -> Dict:
+    """Load config with mtime check.
+    
+    Returns cached config if file hasn't changed since last load.
+    Merges with defaults and adds API key from keyring.
+    """
+    global _config_cache, _cache_mtime
+    
+    config_path = get_config_path()
+    
+    # File doesn't exist - return defaults with API key from keyring
+    if not config_path.exists():
+        _config_cache = DEFAULT_CONFIG.copy()
+        api_key = get_api_key_from_keyring()
+        if api_key is not None:
+            _config_cache["api_key"] = api_key
+        _cache_mtime = None
+        return _config_cache
+    
+    current_mtime = config_path.stat().st_mtime
+    
+    if _config_cache is None or _cache_mtime != current_mtime:
+        # File changed or first load
+        try:
+            with open(config_path) as f:
+                file_config = json.load(f)
+            # Merge with defaults
+            _config_cache = DEFAULT_CONFIG.copy()
+            _config_cache.update(file_config)
+            _cache_mtime = current_mtime
+        except (json.JSONDecodeError, IOError):
+            # Invalid JSON or IO error - return defaults
+            _config_cache = DEFAULT_CONFIG.copy()
+            _cache_mtime = current_mtime
+    
+    # Add API key from keyring
+    api_key = get_api_key_from_keyring()
+    if api_key is not None:
+        _config_cache["api_key"] = api_key
+    
+    return _config_cache
+
+
+def update_config(partial: Dict) -> None:
+    """Update config with multiple fields atomically.
+    
+    Args:
+        partial: Dict of field names to values.
+    """
+    config = _load_config()
+    # Update only the partial fields (don't overwrite api_key from keyring)
+    for key, value in partial.items():
+        if key != "api_key":
+            config[key] = value
+        else:
+            # For api_key, update both config and keyring
+            config[key] = value
+    _save_config(config)
 
 
 def get_api_key_from_keyring() -> Optional[str]:
@@ -153,7 +229,62 @@ def load_config() -> Dict[str, Any]:
     return config
 
 
+def _save_config(config: Dict) -> None:
+    """Internal save function used by update_config."""
+    # Validate required fields
+    required_fields = ["endpoint", "model", "api_key"]
+    for field in required_fields:
+        if field not in config:
+            raise ValueError(f"Missing required field: {field}")
+        if not config[field] and field != "api_key":
+            # api_key can be empty, endpoint and model cannot
+            raise ValueError(f"Field '{field}' cannot be empty")
+
+    # Ensure config directory exists
+    config_path = get_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Store API key in keyring
+    set_api_key_in_keyring(config["api_key"])
+
+    # Create config dict without api_key for JSON storage
+    config_for_json = {
+        "endpoint": config["endpoint"],
+        "model": config["model"],
+        "last_directory": config.get("last_directory", ""),
+        "exclude_dirs": config.get("exclude_dirs", [".git", "node_modules", ".Trash", "__pycache__"]),
+    }
+
+    # Atomic write: write to temp file, then rename
+    config_dir = config_path.parent
+    temp_fd, temp_path = tempfile.mkstemp(
+        suffix=".tmp", prefix="config_", dir=config_dir
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(config_for_json, f, indent=2)
+        # Atomic rename on most filesystems
+        os.replace(temp_path, config_path)
+    except Exception:
+        # Clean up temp file on failure
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+
+
 def save_config(config: Dict[str, Any]) -> None:
+    """Save configuration to config.json and keyring.
+    
+    API key is stored in keyring, not in config.json.
+    Other config values (endpoint, model, last_directory) are saved to config.json.
+    
+    Args:
+        config: Configuration dict with endpoint, model, api_key.
+        
+    Raises:
+        ValueError: If required fields are missing.
+    """
+    _save_config(config)
     """Save configuration to config.json and keyring.
     
     API key is stored in keyring, not in config.json.
@@ -207,44 +338,45 @@ def save_config(config: Dict[str, Any]) -> None:
 
 # Convenience functions
 def get_endpoint() -> str:
-    config = load_config()
+    config = _load_config()
     return config.get("endpoint", DEFAULT_CONFIG["endpoint"])
 
 
 def get_model() -> str:
-    config = load_config()
+    config = _load_config()
     return config.get("model", DEFAULT_CONFIG["model"])
 
 
 def get_api_key() -> str:
-    config = load_config()
+    config = _load_config()
     return config.get("api_key", DEFAULT_CONFIG["api_key"])
 
 
 def get_last_directory() -> str:
-    config = load_config()
+    config = _load_config()
     return config.get("last_directory", "")
 
 
 def set_endpoint(endpoint: str) -> None:
-    config = load_config()
-    config["endpoint"] = endpoint
-    save_config(config)
+    update_config({"endpoint": endpoint})
 
 
 def set_model(model: str) -> None:
-    config = load_config()
-    config["model"] = model
-    save_config(config)
+    update_config({"model": model})
 
 
 def set_api_key(api_key: str) -> None:
-    config = load_config()
-    config["api_key"] = api_key
-    save_config(config)
+    update_config({"api_key": api_key})
 
 
 def set_last_directory(directory: str) -> None:
-    config = load_config()
-    config["last_directory"] = directory
-    save_config(config)
+    update_config({"last_directory": directory})
+
+
+def get_exclude_dirs() -> list:
+    config = _load_config()
+    return config.get("exclude_dirs", [".git", "node_modules", ".Trash", "__pycache__"])
+
+
+def set_exclude_dirs(exclude_dirs: list) -> None:
+    update_config({"exclude_dirs": exclude_dirs})

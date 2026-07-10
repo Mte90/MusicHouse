@@ -1,12 +1,14 @@
 """SQLite cache for leaderboard data."""
 
+import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
 from musichouse.utils import load_mp3_safely
-from musichouse import logging
+from musichouse import log_setup as logging
 
 logger = logging.get_logger(__name__)
 
@@ -15,6 +17,8 @@ class LeaderboardCache:
     """SQLite-based cache for leaderboard data."""
 
     DB_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS schema_version (version INTEGER);
+    
     CREATE TABLE IF NOT EXISTS artists (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -93,22 +97,32 @@ class LeaderboardCache:
         """Ensure database and tables exist."""
         conn = self._get_connection()
         conn.executescript(self.DB_SCHEMA)
+        
+        # Initialize schema version if missing
+        cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
+        row = cursor.fetchone()
+        if row is None:
+            conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+            conn.commit()
+            logger.info("Created schema_version table, set to version 1")
 
     def update_artists(self, artist_counts: dict) -> None:
-        """Update artist counts in database.
+        """Update artist counts in database using bulk insert.
         
         Args:
             artist_counts: Dict mapping artist name to count.
         """
         conn = self._get_connection()
         
-        for artist, count in artist_counts.items():
-            conn.execute(
-                """INSERT INTO artists (name, count) 
-                   VALUES (?, ?) 
-                   ON CONFLICT(name) DO UPDATE SET count = ?""",
-                (artist, count, count)
-            )
+        # Bulk insert with executemany for single transaction
+        data = [(artist, count, count) for artist, count in artist_counts.items()]
+        conn.executemany(
+            """INSERT INTO artists (name, count) 
+               VALUES (?, ?) 
+               ON CONFLICT(name) DO UPDATE SET count = ?""",
+            data
+        )
+        conn.commit()
 
     def get_top_artists(self, limit: int = 10) -> List[Tuple[str, int]]:
         """Get top N artists by count."""
@@ -144,10 +158,17 @@ class LeaderboardCache:
             Dict with size, mtime, artist, title, tag_data if cached, None otherwise.
         """
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title, tag_data FROM scan_cache WHERE path = ?",
-            (path,)
-        )
+        try:
+            cursor = conn.execute(
+                "SELECT path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title, tag_data FROM scan_cache WHERE path = ?",
+                (path,)
+            )
+        except sqlite3.OperationalError:
+            # Column tag_data doesn't exist (old schema)
+            cursor = conn.execute(
+                "SELECT path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title FROM scan_cache WHERE path = ?",
+                (path,)
+            )
         row = cursor.fetchone()
         if row:
             import json
@@ -215,63 +236,102 @@ class LeaderboardCache:
                  suggested_title if suggested_title is not None else None,
                  tag_data_json)
             )
-    def get_changed_files(self, base_path: Path) -> Tuple[list, int, int, int]:
-        """Get files that need processing (new or modified).
+    def get_changed_files(self, files: List[Path]) -> Tuple[list, int, int, int]:
+        """Filter files that have changed since last scan.
         
         Args:
-            base_path: Base directory path.
+            files: List of files from MP3Scanner.scan() (already walked).
             
         Returns:
             Tuple of (changed_files, new_count, modified_count, skipped_count)
         """
-        import os
+        start_time = time.perf_counter()
+        
+        # Quick no-op check: compare cache's max mtime with tree's max mtime
+        conn = self._get_connection()
+        
+        # Get the base directory from the first file
+        if not files:
+            return [], 0, 0, 0
+        
+        base_dir = files[0].parent
+        prefix = f"{base_dir}%"
+        
+        cursor = conn.execute("SELECT MAX(mtime) FROM scan_cache WHERE path LIKE ?", (prefix,))
+        row = cursor.fetchone()
+        cache_max_mtime = row[0] if row and row[0] else 0
+        
+        # Quick scandir to find newest mtime in the tree
+        tree_max_mtime = 0
+        if cache_max_mtime > 0:
+            try:
+                for entry in os.scandir(base_dir):
+                    if entry.is_file():
+                        try:
+                            stat = entry.stat()
+                            if stat.st_mtime > tree_max_mtime:
+                                tree_max_mtime = stat.st_mtime
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+        
+        # If cache has data and cache's max mtime >= tree's max mtime, nothing changed
+        # If cache_max is 0, we need full scan (cache is empty or invalid)
+        if cache_max_mtime > 0 and cache_max_mtime >= tree_max_mtime:
+            duration = time.perf_counter() - start_time
+            logger.debug(f"No-op quick check: cache_max={cache_max_mtime}, tree_max={tree_max_mtime}, skipped in {duration*1000:.1f}ms")
+            return [], 0, 0, len(files)
+        
+        # Full scan needed
+        cursor = conn.execute("SELECT path, mtime, size, needs_fixing FROM scan_cache")
+        cached = {Path(row[0]): {'mtime': row[1], 'size': row[2], 'needs_fixing': row[3]} for row in cursor.fetchall()}
         
         changed_files = []
         new_count = 0
         modified_count = 0
         skipped_count = 0
         
-        for root, dirs, files in os.walk(base_path):
-            for filename in files:
-                if filename.lower().endswith('.mp3'):
-                    file_path = Path(root) / filename
-                    path_str = str(file_path)
-                    
-                    try:
-                        stat = file_path.stat()
-                        size = stat.st_size
-                        mtime = stat.st_mtime
-                    except OSError:
-                        # Can't access file, treat as changed
-                        changed_files.append(file_path)
-                        new_count += 1
-                        continue
-                    
-                    cached = self.get_cached_info(path_str)
-                    
-                    if cached is None:
-                        # New file - always include
-                        changed_files.append(file_path)
-                        new_count += 1
-                    elif cached['size'] != size or cached['mtime'] != mtime:
-                        # Modified file - check if it needs fixing
-                        # Pass cached info to avoid reloading if tag_data exists
-                        needs_fixing = self._check_needs_fixing(file_path, cached)
-                        if needs_fixing:
-                            changed_files.append(file_path)
-                            modified_count += 1
-                        else:
-                            skipped_count += 1
-                    elif cached['needs_fixing']:
-                        # Unchanged file but marked as needing fixing in DB
-                        # This handles files that were cached with needs_fixing=1
-                        # but mtime/size haven't changed yet
-                        changed_files.append(file_path)
-                        modified_count += 1
-                    else:
-                        # Unchanged file with no needs_fixing flag - skip
-                        skipped_count += 1
+        for file_path in files:
+            path_str = str(file_path)
+            
+            try:
+                stat = file_path.stat()
+                size = stat.st_size
+                mtime = stat.st_mtime
+            except OSError:
+                # Can't access file, treat as changed
+                changed_files.append(file_path)
+                new_count += 1
+                continue
+            
+            cached_info = cached.get(file_path)
+            
+            if cached_info is None:
+                # New file - always include
+                changed_files.append(file_path)
+                new_count += 1
+            elif cached_info['size'] != size or cached_info['mtime'] != mtime:
+                # Modified file - check if it needs fixing
+                # Pass cached info to avoid reloading if tag_data exists
+                needs_fixing = self._check_needs_fixing(file_path, self.get_cached_info(path_str))
+                if needs_fixing:
+                    changed_files.append(file_path)
+                    modified_count += 1
+                else:
+                    skipped_count += 1
+            elif cached_info['needs_fixing']:
+                # Unchanged file but marked as needing fixing in DB
+                # This handles files that were cached with needs_fixing=1
+                # but mtime/size haven't changed yet
+                changed_files.append(file_path)
+                modified_count += 1
+            else:
+                # Unchanged file with no needs_fixing flag - skip
+                skipped_count += 1
         
+        duration = time.perf_counter() - start_time
+        logger.info(f"get_changed_files: {len(changed_files)} changed in {duration*1000:.1f}ms")
         return changed_files, new_count, modified_count, skipped_count
 
     def _check_needs_fixing(self, file_path: Path, cached_info: Optional[Dict] = None) -> bool:

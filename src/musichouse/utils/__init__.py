@@ -9,6 +9,8 @@ import logging
 
 import eyed3
 
+from musichouse.error_handling import CorruptedFileError
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +41,9 @@ def load_mp3_safely(file_path: Path) -> Optional["eyed3.AudioFile"]:
         
     Returns:
         AudioFile object on success, None if file cannot be loaded.
+        
+    Raises:
+        CorruptedFileError: If file is corrupted and cannot be loaded.
     """
     result = None
     try:
@@ -53,8 +58,16 @@ def load_mp3_safely(file_path: Path) -> Optional["eyed3.AudioFile"]:
             sys.stderr = old_stderr
             stderr_output = stderr_capture.getvalue()
             if stderr_output and result is None:
+                # T40: Log file size and header validity for corrupted files
+                file_size = file_path.stat().st_size if file_path.exists() else 0
+                has_valid_header = file_path.read_bytes(3) == b"ID3" if file_path.exists() and file_path.stat().st_size >= 3 else False
                 logger.error(f"eyed3 stderr for {file_path}: {stderr_output}")
+                logger.error(f"  File size: {file_size} bytes, Valid ID3 header: {has_valid_header}")
+                raise CorruptedFileError(str(file_path), f"Failed to load - size: {file_size}B, valid header: {has_valid_header}")
                 
+    except CorruptedFileError:
+        # Re-raise corrupted file errors
+        raise
     except Exception as e:
         logger.error(f"Error loading MP3 {file_path}: {e}")
         return None

@@ -1,5 +1,6 @@
 """Tag writer and preview module for MusicHouse."""
 
+import shutil
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -11,8 +12,11 @@ from PyQt6.QtGui import QColor
 
 import eyed3
 
-from musichouse import logging
+from musichouse import log_setup as logging
 from musichouse.utils import load_mp3_safely
+from musichouse.error_handling import (
+    CorruptedFileError, FileLockedError, ReadOnlyFileError, TagWriteError
+)
 
 logger = logging.get_logger(__name__)
 
@@ -116,7 +120,10 @@ def write_tags(
     genre: Optional[str] = None,
     force: bool = False,
 ) -> bool:
-    """Write ID3 tags to an MP3 file.
+    """Write ID3 tags to an MP3 file with crash recovery support.
+
+    Before saving, creates a backup (.bak). If save fails, restores from backup.
+    Deletes backup on success.
 
     Args:
         file_path: Path to the MP3 file.
@@ -127,12 +134,30 @@ def write_tags(
 
     Returns:
         True if successful, False otherwise.
+
+    Raises:
+        FileNotFoundError: If file doesn't exist before loading.
+        CorruptedFileError: If file cannot be loaded as MP3.
+        FileLockedError: If file is locked by another process.
+        ReadOnlyFileError: If file is read-only.
+        TagWriteError: If tag writing fails for other reasons.
     """
+    # T41: Check file exists before loading
+    if not file_path.exists():
+        logger.error(f"File no longer exists: {file_path}")
+        raise FileNotFoundError(f"File no longer exists: {file_path}")
+
+    backup_path = file_path.with_suffix(".bak")
+    
     try:
+        # T37: Create backup before modification
+        logger.debug(f"Creating backup: {backup_path}")
+        shutil.copy2(file_path, backup_path)
+
         audiofile = load_mp3_safely(file_path)
         if audiofile is None:
-            logger.error(f"Could not load MP3 file: {file_path}")
-            return False
+            # T40: This is a corrupted file
+            raise CorruptedFileError(str(file_path), "Failed to load MP3 data")
 
         if audiofile.tag is None:
             audiofile.initTag()
@@ -140,7 +165,7 @@ def write_tags(
         # Check if tags already exist
         if not force and audiofile.tag.artist and audiofile.tag.title:
             logger.warning(f"Tags already exist for {file_path.name} (skipping)")
-            return False
+            return True  # Backup will be cleaned up on success
 
         # Update tags
         audiofile.tag.artist = artist
@@ -148,10 +173,44 @@ def write_tags(
         if genre:
             audiofile.tag.genre = genre
 
-        audiofile.tag.save()
+        # T42/T43: Save with specific error handling
+        try:
+            audiofile.tag.save()
+        except PermissionError as e:
+            # T43: Read-only file (EACCES)
+            logger.error(f"Permission denied writing to {file_path}: {e}")
+            raise ReadOnlyFileError(str(file_path)) from e
+        except OSError as e:
+            # T42: File locked or other OS error
+            logger.error(f"OS error writing to {file_path}: {e}")
+            if "lock" in str(e).lower() or e.errno == 11:  # EAGAIN/EWOULDBLOCK
+                raise FileLockedError(str(file_path)) from e
+            raise TagWriteError(f"OS error writing {file_path}: {e}") from e
+
         logger.info(f"Tags written to {file_path.name}")
         return True
 
+    except (CorruptedFileError, FileLockedError, ReadOnlyFileError, FileNotFoundError):
+        # Re-raise these specific errors
+        raise
+    except TagWriteError:
+        # Re-raise TagWriteError
+        raise
     except Exception as e:
-        logger.error(f"Error writing tags to {file_path}: {e}")
-        return False
+        # T37: Restore from backup on any error
+        logger.error(f"Error writing tags to {file_path}: {e}, restoring from backup")
+        if backup_path.exists():
+            try:
+                shutil.copy2(backup_path, file_path)
+                logger.info(f"Restored {file_path} from backup")
+            except Exception as restore_error:
+                logger.error(f"Failed to restore from backup: {restore_error}")
+        raise TagWriteError(f"Failed to write tags to {file_path}: {e}") from e
+    finally:
+        # T37: Clean up backup on success or if we have a specific error
+        if backup_path.exists():
+            try:
+                backup_path.unlink()
+                logger.debug(f"Removed backup: {backup_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove backup {backup_path}: {e}")

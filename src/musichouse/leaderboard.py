@@ -4,7 +4,7 @@ from typing import Optional, List, Tuple
 from collections import Counter
 from pathlib import Path
 
-from musichouse import logging
+from musichouse import log_setup as logging
 from musichouse import leaderboard_cache
 from musichouse.utils import load_mp3_safely
 
@@ -93,7 +93,12 @@ class Leaderboard:
         """Reset the leaderboard and clear cache."""
         self._cache.clear()
 
-    def __del__(self):
-        """Cleanup database connection."""
+    def close(self) -> None:
+        """Close leaderboard and cleanup database connection."""
         if hasattr(self, '_cache') and self._cache:
             self._cache.close()
+            self._cache = None
+    
+    def __del__(self):
+        """Cleanup database connection."""
+        self.close()

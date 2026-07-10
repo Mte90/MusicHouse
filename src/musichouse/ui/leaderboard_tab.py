@@ -1,12 +1,13 @@
 """Leaderboard tab for MusicHouse - displays top artists."""
 from typing import List, Tuple
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView
 )
 
-from musichouse import logging
+from musichouse import log_setup as logging
 
 logger = logging.get_logger(__name__)
 
@@ -17,6 +18,7 @@ class LeaderboardTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
+        self._empty_label: Optional[QLabel] = None
         self._setup_ui()
         self._load_saved_data()
 
@@ -41,6 +43,13 @@ class LeaderboardTab(QWidget):
         self._table.setColumnWidth(1, 80)  # Count column
         self._layout.addWidget(self._table)
         
+        # Empty state label
+        self._empty_label = QLabel("No scan data yet. Click 'Scan' to build the leaderboard.")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet("color: gray; font-style: italic;")
+        self._empty_label.setVisible(False)
+        self._layout.addWidget(self._empty_label)
+        
     def _load_saved_data(self):
         """Load saved leaderboard data from database on startup."""
         try:
@@ -54,9 +63,12 @@ class LeaderboardTab(QWidget):
             
             if top_artists:
                 self.update_leaderboard(top_artists)
+            else:
+                self._update_empty_state(True)
         except Exception as e:
             logger.error(f"Error loading saved leaderboard: {e}")
             # No data loaded, will be populated when scan runs
+            self._update_empty_state(True)
 
     def update_leaderboard(self, artists: List[Tuple[str, int]]):
         """Update the leaderboard with new data.
@@ -73,3 +85,11 @@ class LeaderboardTab(QWidget):
             self._table.setItem(row, 1, QTableWidgetItem(str(count)))
 
         # logger.info(f"Leaderboard updated with {len(artists)} artists")  # Too verbose during scan
+        
+        # Update empty state
+        self._update_empty_state(len(artists) == 0)
+    
+    def _update_empty_state(self, has_data: bool) -> None:
+        """Show/hide empty state label."""
+        if self._empty_label:
+            self._empty_label.setVisible(not has_data)

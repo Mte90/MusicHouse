@@ -4,10 +4,16 @@ import json
 import socket
 import urllib.error
 import urllib.request
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List, Optional
 
-from musichouse import logging
+from musichouse import log_setup as logging
 from musichouse import config
+from musichouse.error_handling import (
+    APIKeyError,
+    APITimeoutError,
+    APIParseError,
+    APIConnectionError
+)
 
 logger = logging.get_logger(__name__)
 
@@ -83,45 +89,63 @@ class AIClient:
             # API returned an error status code (401, 403, 500, etc.)
             error_msg = f"API error: {e.code} {e.reason}"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APIConnectionError(error_msg)
             
         except TimeoutError as e:
             # Request timed out
             error_msg = "Request timed out after 30s"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APITimeoutError(error_msg)
             
         except socket.timeout as e:
             # Socket timeout
             error_msg = "Request timed out after 30s"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APITimeoutError(error_msg)
             
-        except (urllib.error.URLError, ConnectionError, OSError) as e:
+        except urllib.error.URLError as e:
             # Network errors (connection refused, DNS failure, etc.)
-            error_msg = f"Network error: {e.reason}" if hasattr(e, 'reason') else f"Network error: {e}"
+            error_msg = f"Cannot connect to API: {e.reason}" if hasattr(e, 'reason') else f"Cannot connect to API: {e}"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APIConnectionError(error_msg)
+            
+        except ConnectionRefusedError as e:
+            # Connection refused
+            error_msg = "Cannot connect to API: Connection refused"
+            logger.error(error_msg)
+            raise APIConnectionError(error_msg)
+            
+        except (ConnectionError, OSError) as e:
+            # Connection errors
+            error_msg = f"Cannot connect to API: {e}"
+            logger.error(error_msg)
+            raise APIConnectionError(error_msg)
             
         except json.JSONDecodeError as e:
             # Invalid JSON in API response
             error_msg = f"Failed to parse AI response: {e}"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APIParseError(error_msg)
+            
+        except APIParseError:
+            # Re-raise parse errors as-is
+            raise
             
         except Exception as e:
             # Catch-all for any other unexpected errors
             error_msg = f"AI service error: {e}"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APIConnectionError(error_msg)
+            
 
-    def _extract_result(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+    def _extract_result(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """Extract JSON from LLM response robustly."""
         try:
             if "choices" not in response or not response["choices"]:
                 error_msg = "Failed to parse AI response: no choices in response"
                 logger.error(error_msg)
-                return {"error": error_msg}
+                raise APIParseError(error_msg)
                 
             content = response["choices"][0]["message"]["content"]
             
@@ -129,6 +153,8 @@ class AIClient:
             decoder = json.JSONDecoder()
             result, _ = decoder.raw_decode(content)
             return result
+        except APIParseError:
+            raise
         except json.JSONDecodeError:
             # Fallback: try to find JSON-like pattern with regex
             import re
@@ -151,11 +177,11 @@ class AIClient:
             
             error_msg = "Failed to parse AI response: no valid JSON found"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APIParseError(error_msg)
         except (KeyError, IndexError) as e:
             error_msg = f"Failed to parse AI response: {e}"
             logger.error(error_msg)
-            return {"error": error_msg}
+            raise APIParseError(error_msg)
 
     def _get_fallback_response(self, prompt: str) -> Dict[str, Any]:
         """Generate fallback response when API fails."""

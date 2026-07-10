@@ -12,6 +12,12 @@ from pathlib import Path
 import pytest
 
 from musichouse.ai_client import AIClient
+from musichouse.error_handling import (
+    APIKeyError,
+    APITimeoutError,
+    APIParseError,
+    APIConnectionError
+)
 
 
 # ============================================================================
@@ -74,14 +80,12 @@ class TestInferTags:
         mock_urlopen.assert_called_once()
 
     def test_infer_tags_with_api_failure(self, ai_client_with_key):
-        """Test infer_tags returns error message when API fails."""
+        """Test infer_tags raises APIConnectionError when API fails."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection error")
 
-            result = ai_client_with_key.infer_tags("Some File.mp3")
-
-            assert "error" in result
-            assert "AI service error" in result["error"]
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.infer_tags("Some File.mp3")
 
 
 # ============================================================================
@@ -135,14 +139,12 @@ class TestGetSimilarArtists:
         mock_urlopen.assert_called_once()
 
     def test_get_similar_artists_with_api_failure(self, ai_client_with_key):
-        """Test get_similar_artists returns error when API fails."""
+        """Test get_similar_artists raises APIConnectionError when API fails."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("API error")
 
-            result = ai_client_with_key.get_similar_artists("Some Artist")
-
-            # Returns [] because result is {"error": "..."} and .get("artists", []) returns []
-            assert result == []
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.get_similar_artists("Some Artist")
 
 
 # ============================================================================
@@ -181,14 +183,12 @@ class TestGetArtistGenres:
         mock_urlopen.assert_called_once()
 
     def test_get_artist_genres_with_api_failure(self, ai_client_with_key):
-        """Test get_artist_genres returns error when API fails."""
+        """Test get_artist_genres raises APIConnectionError when API fails."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("API error")
 
-            result = ai_client_with_key.get_artist_genres("Some Artist")
-
-            # Returns [] because result is {"error": "..."} and .get("genres", []) returns []
-            assert result == []
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.get_artist_genres("Some Artist")
 
 
 # ============================================================================
@@ -217,41 +217,39 @@ class TestFallbackNoApiKey:
 # Test: Fallback when API fails
 # ============================================================================
 class TestFallbackApiFailure:
-    """Tests for fallback behavior when API call fails."""
+    """Tests for typed exceptions when API call fails."""
 
     def test_infer_tags_api_error(self, ai_client_with_key):
-        """Test infer_tags returns error message on API error."""
+        """Test infer_tags raises APIConnectionError on API error."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection timeout")
             
-            result = ai_client_with_key.infer_tags("file.mp3")
-            assert "error" in result
-            assert "AI service error" in result["error"]
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.infer_tags("file.mp3")
 
     def test_get_similar_artists_api_error(self, ai_client_with_key):
-        """Test get_similar_artists returns error on API error."""
+        """Test get_similar_artists raises APIConnectionError on API error."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection timeout")
             
-            result = ai_client_with_key.get_similar_artists("Artist")
-            assert result == []
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.get_similar_artists("Artist")
 
     def test_get_artist_genres_api_error(self, ai_client_with_key):
-        """Test get_artist_genres returns error on API error."""
+        """Test get_artist_genres raises APIConnectionError on API error."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection timeout")
             
-            result = ai_client_with_key.get_artist_genres("Artist")
-            assert result == []
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.get_artist_genres("Artist")
 
     def test_api_connection_refused(self, ai_client_with_key):
-        """Test returns error message on connection refused."""
+        """Test raises APIConnectionError on connection refused."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = ConnectionRefusedError("Connection refused")
             
-            result = ai_client_with_key.infer_tags("file.mp3")
-            assert "error" in result
-            assert "Network error" in result["error"]
+            with pytest.raises(APIConnectionError):
+                ai_client_with_key.infer_tags("file.mp3")
 
 
 # ============================================================================
@@ -304,7 +302,7 @@ class TestJsonParsing:
 
     @patch('musichouse.ai_client.urllib.request.urlopen')
     def test_parse_invalid_json_returns_error(self, mock_urlopen, ai_client_with_key):
-        """Test that invalid JSON returns error dict."""
+        """Test that invalid JSON raises APIParseError."""
         mock_response = MagicMock()
         api_response = {
             "choices": [
@@ -318,9 +316,8 @@ class TestJsonParsing:
         mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
-        result = ai_client_with_key.infer_tags("file.mp3")
-
-        assert "error" in result
+        with pytest.raises(APIParseError):
+            ai_client_with_key.infer_tags("file.mp3")
 
 
 # ============================================================================
@@ -330,21 +327,20 @@ class TestTimeoutHandling:
     """Tests for timeout handling in API calls."""
 
     def test_timeout_error(self, ai_client_with_key):
-        """Test returns timeout error message."""
+        """Test raises APITimeoutError on timeout."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = TimeoutError("Request timed out")
             
-            result = ai_client_with_key.infer_tags("file.mp3")
-            assert "error" in result
-            assert "Request timed out after 30s" in result["error"]
+            with pytest.raises(APITimeoutError):
+                ai_client_with_key.infer_tags("file.mp3")
 
     def test_socket_timeout(self, ai_client_with_key):
-        """Test returns timeout error message on socket timeout."""
+        """Test raises APITimeoutError on socket timeout."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = socket.timeout("Socket timeout")
             
-            result = ai_client_with_key.get_similar_artists("Artist")
-            assert result == []
+            with pytest.raises(APITimeoutError):
+                ai_client_with_key.get_similar_artists("Artist")
 
 
 # ============================================================================
@@ -359,7 +355,20 @@ class TestNoRealApiCalls:
             # Don't call any method - just verify mock is set up
             assert mock_urlopen.call_count == 0
 
-            # Now make a call
+            # Now make a call - need to provide proper mock response
+            mock_response = MagicMock()
+            api_response = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"artist": "Test", "title": "Title"}'
+                        }
+                    }
+                ]
+            }
+            mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+            mock_urlopen.return_value.__enter__.return_value = mock_response
+            
             ai_client_with_key.infer_tags("file.mp3")
             
             # Verify mock WAS called (proving we used the mock, not real API)
@@ -391,72 +400,39 @@ class TestResponseParseError:
 
 
     def test_response_parse_error(self, ai_client_with_key):
-
-        """Test that response parsing errors are handled gracefully."""
-
+        """Test that response parsing errors raise APIParseError."""
         # Mock response that will cause JSON parse error in _extract_result
-
         mock_response_data = {
-
             "choices": [{
-
                 "message": {
-
                     "content": "Invalid response without JSON"  # No valid JSON
-
                 }
-
             }]
-
         }
-
         
-
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
-
             mock_response = MagicMock()
-
             mock_response.read.return_value = json.dumps(mock_response_data).encode('utf-8')
-
             mock_urlopen.return_value.__enter__.return_value = mock_response
-
             
-
-            # Should handle parse error and return error dict
-
-            result = ai_client_with_key.infer_tags("file.mp3")
-
-            assert "error" in result
+            # Should raise APIParseError
+            with pytest.raises(APIParseError):
+                ai_client_with_key.infer_tags("file.mp3")
 
 
 
     def test_extract_result_exception_path(self, ai_client_with_key):
-
-        """Test _extract_result handles exceptions and logs error."""
-
+        """Test _extract_result raises APIParseError on exception."""
         # Mock response that causes exception during extraction
-
         mock_response_data = {
-
             "choices": []  # Empty choices will cause IndexError
-
         }
-
         
-
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
-
             mock_response = MagicMock()
-
             mock_response.read.return_value = json.dumps(mock_response_data).encode('utf-8')
-
             mock_urlopen.return_value.__enter__.return_value = mock_response
-
             
-
-            # Should handle exception and return error dict
-
-            result = ai_client_with_key.infer_tags("file.mp3")
-
-            assert "error" in result
-            assert "error" in result
+            # Should raise APIParseError
+            with pytest.raises(APIParseError):
+                ai_client_with_key.infer_tags("file.mp3")
