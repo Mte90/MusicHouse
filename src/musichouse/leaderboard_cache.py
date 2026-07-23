@@ -201,7 +201,6 @@ class LeaderboardCache:
                         suggested_artist, suggested_title, tag_data.
         """
         conn = self._get_connection()
-        import time
         import json
         scan_time = time.time()
         

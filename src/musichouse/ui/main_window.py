@@ -1,5 +1,6 @@
 """Main window for MusicHouse application."""
 
+import json
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
@@ -170,6 +171,12 @@ class ScanWorker(QThread):
                                 'title': title
                             }
                         
+                        # Compute suggestions using parse_filename
+                        from musichouse.parser import parse_filename
+                        sug_artist, sug_title = parse_filename(file_path.name, file_path)
+                        suggested_artist = sug_artist or ''
+                        suggested_title = sug_title or ''
+                        
                         files_info.append({
                             'path': str(file_path),
                             'size': stat.st_size,
@@ -179,7 +186,9 @@ class ScanWorker(QThread):
                             'missing_artist': missing_artist,
                             'missing_title': missing_title,
                             'needs_fixing': needs_fixing,
-                            'tag_data': tag_data
+                            'tag_data': tag_data,
+                            'suggested_artist': suggested_artist,
+                            'suggested_title': suggested_title
                         })
                         
                         # Track artist counts for leaderboard
@@ -192,6 +201,8 @@ class ScanWorker(QThread):
                     except Exception:
                         # Include failed files with None values
                         stat = file_path.stat()
+                        from musichouse.parser import parse_filename
+                        sug_artist, sug_title = parse_filename(file_path.name, file_path)
                         files_info.append({
                             'path': str(file_path),
                             'size': stat.st_size,
@@ -200,7 +211,9 @@ class ScanWorker(QThread):
                             'title': None,
                             'missing_artist': 1,
                             'missing_title': 1,
-                            'needs_fixing': 1
+                            'needs_fixing': 1,
+                            'suggested_artist': sug_artist or '',
+                            'suggested_title': sug_title or ''
                         })
                     
                     if i % 10 == 0 or i == total_files:
@@ -210,10 +223,8 @@ class ScanWorker(QThread):
                     # Small sleep to let UI thread process signals
                     # Prevents UI freeze during intensive scans
                     if i % 10 == 0:
-                        import time
                         time.sleep(0.01)  # 10ms sleep every 10 files
                 # Phase 3: Update cache with bulk insert in single transaction
-                import time
                 total_cache = len(files_info)
                 conn = cache._get_connection()
                 
@@ -224,14 +235,15 @@ class ScanWorker(QThread):
                                    info.get('artist'), info.get('title'), time.time(),
                                    info.get('needs_fixing', 0), info.get('missing_artist', 0),
                                    info.get('missing_title', 0), info.get('suggested_artist'),
-                                   info.get('suggested_title'))
+                                   info.get('suggested_title'),
+                                   json.dumps(info.get('tag_data')) if info.get('tag_data') else None)
                                   for info in files_info]
                     
                     conn.executemany(
                         """INSERT OR REPLACE INTO scan_cache
                            (path, size, mtime, artist, title, scan_time,
                             needs_fixing, missing_artist, missing_title,
-                            suggested_artist, suggested_title)
+                            suggested_artist, suggested_title, tag_data)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         cache_data
                     )
@@ -336,9 +348,6 @@ class MainWindow(QMainWindow):
         # Tab widget
         self._setup_tabs()
         
-        # Keyboard shortcuts
-        self._setup_shortcuts()
-        
         # Layout
         main_layout.addWidget(self._toolbar_widget)
         main_layout.addWidget(self._status_label)
@@ -392,20 +401,6 @@ class MainWindow(QMainWindow):
         about_action.setStatusTip("Show about dialog")
         help_menu.addAction(about_action)
     
-    def _setup_shortcuts(self) -> None:
-        """Set up keyboard shortcuts."""
-        # Ctrl+O → scan (also in menu, but add as global shortcut)
-        self._scan_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
-        self._scan_shortcut.activated.connect(self._start_scan)
-        
-        # Esc → stop
-        self._stop_shortcut = QShortcut(QKeySequence("Esc"), self)
-        self._stop_shortcut.activated.connect(self._stop_scan)
-        
-        # Ctrl+, → settings
-        self._settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
-        self._settings_shortcut.activated.connect(self._open_settings)
-    
     def _show_about(self) -> None:
         """Show about dialog."""
         QMessageBox.about(
@@ -428,16 +423,6 @@ class MainWindow(QMainWindow):
         self._scan_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         self._scan_btn.clicked.connect(self._start_scan)
         self._scan_btn.setToolTip("Scan a directory for MP3 files (Ctrl+O)")
-        toolbar_layout.addWidget(self._scan_btn)
-        """Set up the toolbar."""
-        self._toolbar_widget = QWidget()
-        toolbar_layout = QHBoxLayout(self._toolbar_widget)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Scan button
-        self._scan_btn = QPushButton("Scan")
-        self._scan_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
-        self._scan_btn.clicked.connect(self._start_scan)
         toolbar_layout.addWidget(self._scan_btn)
         
         # Settings button
@@ -590,7 +575,15 @@ class MainWindow(QMainWindow):
         logger.info("Settings opened")
     
     def _install_shortcuts(self) -> None:
-        """Install keyboard shortcuts for Ctrl+C, Ctrl+Q, and Ctrl+,"""
+        """Install keyboard shortcuts for Ctrl+C, Ctrl+Q, Ctrl+O, Esc, and Ctrl+,"""
+        # Ctrl+O: Start scan
+        self._scan_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
+        self._scan_shortcut.activated.connect(self._start_scan)
+        
+        # Esc: Stop scan
+        self._stop_esc_shortcut = QShortcut(QKeySequence("Esc"), self)
+        self._stop_esc_shortcut.activated.connect(self._stop_scan)
+        
         # Ctrl+C: Stop scan if scanning, otherwise do nothing
         self._stop_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
         self._stop_shortcut.activated.connect(self._handle_stop_shortcut)

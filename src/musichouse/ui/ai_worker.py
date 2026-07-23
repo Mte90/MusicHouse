@@ -1,6 +1,6 @@
 """AI worker thread for off-GUI-thread API calls."""
 
-from PyQt6.QtCore import QThread, pyqtSignal, QObject
+from PyQt6.QtCore import QThread, pyqtSignal
 from musichouse.ai_client import AIClient
 from musichouse import log_setup as logging
 

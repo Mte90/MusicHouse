@@ -285,55 +285,6 @@ def save_config(config: Dict[str, Any]) -> None:
         ValueError: If required fields are missing.
     """
     _save_config(config)
-    """Save configuration to config.json and keyring.
-    
-    API key is stored in keyring, not in config.json.
-    Other config values (endpoint, model, last_directory) are saved to config.json.
-    
-    Args:
-        config: Configuration dict with endpoint, model, api_key.
-        
-    Raises:
-        ValueError: If required fields are missing.
-    """
-    # Validate required fields
-    required_fields = ["endpoint", "model", "api_key"]
-    for field in required_fields:
-        if field not in config:
-            raise ValueError(f"Missing required field: {field}")
-        if not config[field] and field != "api_key":
-            # api_key can be empty, endpoint and model cannot
-            raise ValueError(f"Field '{field}' cannot be empty")
-
-    # Ensure config directory exists
-    config_path = get_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Store API key in keyring
-    set_api_key_in_keyring(config["api_key"])
-
-    # Create config dict without api_key for JSON storage
-    config_for_json = {
-        "endpoint": config["endpoint"],
-        "model": config["model"],
-        "last_directory": config.get("last_directory", ""),
-    }
-
-    # Atomic write: write to temp file, then rename
-    config_dir = config_path.parent
-    temp_fd, temp_path = tempfile.mkstemp(
-        suffix=".tmp", prefix="config_", dir=config_dir
-    )
-    try:
-        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-            json.dump(config_for_json, f, indent=2)
-        # Atomic rename on most filesystems
-        os.replace(temp_path, config_path)
-    except Exception:
-        # Clean up temp file on failure
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-        raise
 
 
 # Convenience functions

@@ -82,9 +82,6 @@ class FixerTab(QWidget):
         self._table.setAlternatingRowColors(True)
         # CRITICAL: Disable sorting to prevent row index mismatch bug
         self._table.setSortingEnabled(False)
-        self._table.itemChanged.connect(self._on_item_changed)
-        self._table.cellChanged.connect(self._on_cell_changed)
-        self._table.setAlternatingRowColors(True)
         
         layout.addWidget(self._table)
         
@@ -388,11 +385,15 @@ class FixerTab(QWidget):
         row = self._table.rowCount()
         self._table.insertRow(row)
 
+        # Store the index into _files_data for this entry
+        data_index = len(self._files_data) - 1
+
         # Checkbox
         checkbox_item = QTableWidgetItem()
         # Enable both selection and checking
         checkbox_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
         checkbox_item.setCheckState(Qt.CheckState.Unchecked)
+        checkbox_item.setData(Qt.ItemDataRole.UserRole, data_index)  # Store _files_data index
         self._table.setItem(row, 0, checkbox_item)
 
         # File name with tooltip showing full path
@@ -435,11 +436,14 @@ class FixerTab(QWidget):
 
     def get_selected_files(self) -> List[Path]:
         """Get list of selected file paths (from checkboxes)."""
-        checked_rows = self._get_checked_rows()
-        if not checked_rows:
-            return []
-
-        return [self._files_data[row]["path"] for row in checked_rows]
+        selected = []
+        for row in range(self._table.rowCount()):
+            checkbox_item = self._table.item(row, 0)
+            if checkbox_item and checkbox_item.checkState() == Qt.CheckState.Checked:
+                data_idx = checkbox_item.data(Qt.ItemDataRole.UserRole)
+                if data_idx is not None and 0 <= data_idx < len(self._files_data):
+                    selected.append(self._files_data[data_idx]["path"])
+        return selected
 
     def _on_item_changed(self, item: QTableWidgetItem):
         """Handle item changes (e.g., checkbox toggling)."""
@@ -448,21 +452,31 @@ class FixerTab(QWidget):
 
     def _on_cell_changed(self, row: int, column: int):
         """Handle cell editing."""
+        # Get the _files_data index from the checkbox's UserRole
+        checkbox_item = self._table.item(row, 0)
+        data_idx = checkbox_item.data(Qt.ItemDataRole.UserRole) if checkbox_item else None
+        if data_idx is None or not (0 <= data_idx < len(self._files_data)):
+            return
         if column == 2:  # Artist column
-            self._files_data[row]["existing_artist"] = self._table.item(row, 2).text()
+            self._files_data[data_idx]["existing_artist"] = self._table.item(row, 2).text()
         elif column == 3:  # Title column
-            self._files_data[row]["existing_title"] = self._table.item(row, 3).text()
+            self._files_data[data_idx]["existing_title"] = self._table.item(row, 3).text()
 
     def fix_selected(self) -> None:
         """Apply fixes to selected files using worker thread."""
-        checked_rows = sorted(self._get_checked_rows())
+        # Get data indices from checked rows via UserRole
+        checked_rows = self._get_checked_rows()
         if not checked_rows:
             return
         
         # Prepare files data with current table values
         files_to_fix = []
         for row in checked_rows:
-            entry = self._files_data[row].copy()
+            checkbox_item = self._table.item(row, 0)
+            data_idx = checkbox_item.data(Qt.ItemDataRole.UserRole) if checkbox_item else None
+            if data_idx is None or not (0 <= data_idx < len(self._files_data)):
+                continue
+            entry = self._files_data[data_idx].copy()
             # Get current values from table (may have been edited)
             artist_item = self._table.item(row, 2)
             title_item = self._table.item(row, 3)
@@ -502,7 +516,11 @@ class FixerTab(QWidget):
         # Prepare files data with current table values (same as fix_selected)
         files_to_fix = []
         for row in range(self._table.rowCount()):
-            entry = self._files_data[row].copy()
+            checkbox_item = self._table.item(row, 0)
+            data_idx = checkbox_item.data(Qt.ItemDataRole.UserRole) if checkbox_item else None
+            if data_idx is None or not (0 <= data_idx < len(self._files_data)):
+                continue
+            entry = self._files_data[data_idx].copy()
             # Get current values from table (may have been edited)
             artist_item = self._table.item(row, 2)
             title_item = self._table.item(row, 3)
@@ -673,7 +691,11 @@ class FixerTab(QWidget):
         
         # Mark failed rows in the table with red background
         for failed_path in self._failed_paths:
-            self._mark_failed_row(failed_path)
+            error_type = next(
+                (et for fn, et, msg in self._failure_details if fn == failed_path.name),
+                None,
+            )
+            self._mark_failed_row(failed_path, error_type)
         
         # Reset UI
         self._progress_bar.setVisible(False)

@@ -97,11 +97,6 @@ class AIClient:
             logger.error(error_msg)
             raise APITimeoutError(error_msg)
             
-        except socket.timeout as e:
-            # Socket timeout
-            error_msg = "Request timed out after 30s"
-            logger.error(error_msg)
-            raise APITimeoutError(error_msg)
             
         except urllib.error.URLError as e:
             # Network errors (connection refused, DNS failure, etc.)
