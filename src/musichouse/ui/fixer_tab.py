@@ -349,13 +349,13 @@ class FixerTab(QWidget):
 
         self._table.setRowCount(0)
 
-        for entry in self._files_data:
+        for idx, entry in enumerate(self._files_data):
             should_show = self._should_show_entry(entry, filter_text)
             # Also check search pattern
             if should_show and search_pattern:
                 should_show = search_pattern in entry["filename"].lower()
             if should_show:
-                self._add_row_to_table(entry)
+                self._add_row_to_table(entry, data_index=idx)
         
         # Update empty state based on filtered results
         self._update_empty_state(self._table.rowCount() == 0)
@@ -380,13 +380,18 @@ class FixerTab(QWidget):
             return entry["missing_artist"] and entry["missing_title"]
         return True
 
-    def _add_row_to_table(self, entry: Dict):
-        """Add a row to the table."""
+    def _add_row_to_table(self, entry: Dict, data_index: Optional[int] = None):
+        """Add a row to the table.
+
+        Args:
+            data_index: Index into _files_data for this entry.
+                        If None, assumes entry was just appended (len - 1).
+        """
         row = self._table.rowCount()
         self._table.insertRow(row)
 
-        # Store the index into _files_data for this entry
-        data_index = len(self._files_data) - 1
+        if data_index is None:
+            data_index = len(self._files_data) - 1
 
         # Checkbox
         checkbox_item = QTableWidgetItem()
@@ -792,10 +797,10 @@ class FixerTab(QWidget):
         for data_index in sorted(rows_to_remove, reverse=True):
             del self._files_data[data_index]
 
-        # Rebuild the table (proxy model will handle sorting automatically)
+        # Rebuild the table
         self._table.setRowCount(0)
-        for entry in self._files_data:
-            self._add_row_to_table(entry)
+        for idx, entry in enumerate(self._files_data):
+            self._add_row_to_table(entry, data_index=idx)
         
         # Update empty state
         self._update_empty_state(self._table.rowCount() == 0)

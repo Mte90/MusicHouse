@@ -244,7 +244,7 @@ class ScanWorker(QThread):
                            (path, size, mtime, artist, title, scan_time,
                             needs_fixing, missing_artist, missing_title,
                             suggested_artist, suggested_title, tag_data)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         cache_data
                     )
                     conn.commit()
