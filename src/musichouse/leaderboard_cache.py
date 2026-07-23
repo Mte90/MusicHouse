@@ -94,17 +94,23 @@ class LeaderboardCache:
         return self._local.conn
 
     def _ensure_db(self) -> None:
-        """Ensure database and tables exist."""
+        """Ensure database and tables exist, migrating old schemas."""
         conn = self._get_connection()
         conn.executescript(self.DB_SCHEMA)
+        
+        # Migrate old schemas: add tag_data column if missing (added in v2)
+        cols = {row['name'] for row in conn.execute("PRAGMA table_info(scan_cache)")}
+        if 'tag_data' not in cols:
+            conn.execute("ALTER TABLE scan_cache ADD COLUMN tag_data TEXT")
+            logger.info("Migrated scan_cache: added tag_data column")
         
         # Initialize schema version if missing
         cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
         row = cursor.fetchone()
         if row is None:
-            conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+            conn.execute("INSERT INTO schema_version (version) VALUES (2)")
             conn.commit()
-            logger.info("Created schema_version table, set to version 1")
+            logger.info("Created schema_version table, set to version 2")
 
     def update_artists(self, artist_counts: dict) -> None:
         """Update artist counts in database using bulk insert.
