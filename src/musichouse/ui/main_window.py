@@ -506,8 +506,10 @@ class MainWindow(QMainWindow):
         self._is_scanning = True
         
         # Update UI
-        self._status_label.setText(f"Scanning: {directory}")
+        self._status_label.setText(f"Scanning filesystem... (0 files found)")
         self._progress_bar.setVisible(True)
+        self._progress_bar.setRange(0, 0)
+        self._scan_btn.setEnabled(False)
         self._scan_btn.setEnabled(False)
         self._pause_btn.setEnabled(True)
         self._pause_btn.setText("Pause")
@@ -616,16 +618,17 @@ class MainWindow(QMainWindow):
         """Handle file processed event during filesystem scan."""
         # Only update if not in tag reading phase
         if not self._status_label.text().startswith("Reading tags"):
-            self._status_label.setText(f"Scanned {file_count} files")
+            self._status_label.setText(f"Scanning filesystem... ({file_count} files found)")
 
     def _on_scan_total_work(self, total: int) -> None:
         """Set progress bar range ONCE at scan start."""
         self._progress_bar.setRange(0, total)
         self._progress_bar.setValue(0)
+        self._status_label.setText(f"Reading tags: 0/{total}")
 
     def _on_tag_read_progress(self, current: int, total: int) -> None:
         """Handle tag reading progress update."""
-        self._status_label.setText(f"Processing: {current}/{total}")
+        self._status_label.setText(f"Reading tags: {current}/{total}")
         # Only update value - range is set once by _on_scan_total_work
         self._progress_bar.setValue(current)
     def _on_scan_stats(self, new_count: int, modified_count: int, skipped_count: int) -> None:
@@ -688,6 +691,8 @@ class MainWindow(QMainWindow):
             logger.warning(f"WAL checkpoint failed: {e}")
         
         self._progress_bar.setVisible(False)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
         logger.info("Scan completion handler finished - UI should be responsive")
     def _on_artist_count_updated(self, artist: str, count: int) -> None:
         """Handle artist count update during scan (throttled for UI performance)."""
