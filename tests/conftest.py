@@ -49,6 +49,20 @@ def qapp() -> Generator[QApplication, None, None]:
     app.quit()
 
 
+@pytest.fixture(autouse=True)
+def _mock_keyring(monkeypatch):
+    """Prevent every test from hitting the real OS keyring.
+
+    Without this, tests on Linux trigger a GNOME Keyring/KWallet unlock prompt.
+    Tests that need to exercise keyring behavior can override these patches
+    locally with their own ``patch`` context.
+    """
+    import keyring
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    monkeypatch.setattr(keyring, "set_password", lambda *a, **k: None)
+    monkeypatch.setattr(keyring, "delete_password", lambda *a, **k: None)
+
+
 # ============================================================================
 # Temporary Database Fixture
 # ============================================================================

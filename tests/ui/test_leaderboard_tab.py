@@ -3,6 +3,7 @@ Tests LeaderboardTab functionality with pytest-qt in headless offscreen mode.
 Run with: QT_QPA_PLATFORM=offscreen pytest tests/ui/test_leaderboard_tab.py -v
 """
 import pytest
+from unittest.mock import patch
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QHeaderView, QTableWidgetItem
 from typing import List, Tuple
@@ -23,7 +24,9 @@ def leaderboard_tab(qapp):
     """
     from musichouse.ui.leaderboard_tab import LeaderboardTab
     
-    tab = LeaderboardTab()
+    with patch("musichouse.leaderboard_cache.LeaderboardCache") as mock_cache:
+        mock_cache.return_value.get_top_artists.return_value = []
+        tab = LeaderboardTab()
     tab.show()
     yield tab
     tab.close()

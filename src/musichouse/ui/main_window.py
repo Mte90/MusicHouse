@@ -47,6 +47,7 @@ class ScanWorker(QThread):
     tag_read_progress = pyqtSignal(int, int)  # (current, total) - progress during tag reading
     scan_total_work = pyqtSignal(int)  # NEW: emit total work once at scan start
     scan_stats = pyqtSignal(int, int, int)  # (new_count, modified_count, skipped_count)
+    partial_results_ready = pyqtSignal()  # emitted when partial results are flushed to cache
     
     def __init__(self, base_path: Path):
         super().__init__()
@@ -119,14 +120,13 @@ class ScanWorker(QThread):
             files_to_process = changed_files
             total_files = len(files_to_process)
             
-            # Phase 2: Read ID3 tags, update cache, and emit real-time fixes in single pass
+            # Phase 2: Read ID3 tags, update cache incrementally, and emit real-time fixes in single pass
             if total_files > 0:
-                # Calculate total work: tag reading + cache updates
-                total_cache_ops = total_files  # Same number of cache updates as files
-                total_work = total_files + total_cache_ops
-                self.scan_total_work.emit(total_work)
+                # Calculate total work: only tag reading (no cache-ops doubling)
+                self.scan_total_work.emit(total_files)
 
                 files_info = []  # Initialize list to collect file info for cache update
+                files_info_batch = []  # Batch for incremental cache writes every 100 files
 
                 
                 self.progress.emit(f"Processing: 0/{total_files} files")
@@ -156,7 +156,7 @@ class ScanWorker(QThread):
                         audio_file = eyed3.load(str(file_path))
                         artist = getattr(audio_file.tag, 'artist', None) if audio_file and audio_file.tag else None
                         title = getattr(audio_file.tag, 'title', None) if audio_file and audio_file.tag else None
-                        stat = file_path.stat()
+                        stat = file_path.stat() if file_path.exists() else None
                         
                         # Calculate missing flags
                         missing_artist = 1 if (not artist or (isinstance(artist, str) and artist.strip() == '')) else 0
@@ -179,8 +179,8 @@ class ScanWorker(QThread):
                         
                         files_info.append({
                             'path': str(file_path),
-                            'size': stat.st_size,
-                            'mtime': stat.st_mtime,
+                            'size': stat.st_size if stat else 0,
+                            'mtime': stat.st_mtime if stat else 0,
                             'artist': artist,
                             'title': title,
                             'missing_artist': missing_artist,
@@ -198,15 +198,24 @@ class ScanWorker(QThread):
                             # Emit artist_count_updated signal every 100 files for real-time leaderboard updates
                             if i % 100 == 0:
                                 self.artist_count_updated.emit(artist, self._artist_counts[artist])
+                        
+                        # Add to batch for incremental cache writes
+                        files_info_batch.append(files_info[-1])
+                        
+                        # Flush batch every 100 files
+                        if i % 100 == 0:
+                            conn = cache._get_connection()
+                            self._flush_batch_to_cache(files_info_batch, conn)
+                            files_info_batch = []  # Clear batch after flush
                     except Exception:
                         # Include failed files with None values
-                        stat = file_path.stat()
+                        stat = file_path.stat() if file_path.exists() else None
                         from musichouse.parser import parse_filename
                         sug_artist, sug_title = parse_filename(file_path.name, file_path)
                         files_info.append({
                             'path': str(file_path),
-                            'size': stat.st_size,
-                            'mtime': stat.st_mtime,
+                            'size': stat.st_size if stat else 0,
+                            'mtime': stat.st_mtime if stat else 0,
                             'artist': None,
                             'title': None,
                             'missing_artist': 1,
@@ -220,50 +229,52 @@ class ScanWorker(QThread):
                         self.progress.emit(f"Reading tags: {i}/{total_files}")
                         self.tag_read_progress.emit(i, total_files)
                     
-                    # Small sleep to let UI thread process signals
-                    # Prevents UI freeze during intensive scans
-                    if i % 10 == 0:
-                        time.sleep(0.01)  # 10ms sleep every 10 files
-                # Phase 3: Update cache with bulk insert in single transaction
-                total_cache = len(files_info)
-                conn = cache._get_connection()
+                    # Check for pause AFTER processing each file
+                    if not self._pause_event.is_set():
+                        # Flush remaining batch before pausing
+                        if files_info_batch:
+                            conn = cache._get_connection()
+                            self._flush_batch_to_cache(files_info_batch, conn)
+                            files_info_batch = []
+                        # Emit signal to update Fixer tab with partial results
+                        self.partial_results_ready.emit()
+                        logger.debug("Scan PAUSED - blocking on wait()")
+                        # Wait with timeout so we can check stopRequested periodically
+                        while not self._pause_event.is_set():
+                            # Wait with timeout to allow checking stop flag
+                            self._pause_event.wait(timeout=0.1)  # 100ms timeout
+                            if self._stop_requested:
+                                logger.info("Scan stopped while paused")
+                                break
+                        if self._stop_requested:
+                            logger.info("Scan stopped by user after pause")
+                            break
+                        logger.debug("Scan RESUMED - continuing processing")
                 
-                try:
-                    # Bulk insert all cache data in a single transaction
-                    cache_start = time.perf_counter()
-                    cache_data = [(info['path'], info['size'], info['mtime'],
-                                   info.get('artist'), info.get('title'), time.time(),
-                                   info.get('needs_fixing', 0), info.get('missing_artist', 0),
-                                   info.get('missing_title', 0), info.get('suggested_artist'),
-                                   info.get('suggested_title'),
-                                   json.dumps(info.get('tag_data')) if info.get('tag_data') else None)
-                                  for info in files_info]
-                    
-                    conn.executemany(
-                        """INSERT OR REPLACE INTO scan_cache
-                           (path, size, mtime, artist, title, scan_time,
-                            needs_fixing, missing_artist, missing_title,
-                            suggested_artist, suggested_title, tag_data)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        cache_data
-                    )
-                    conn.commit()
-                    cache_duration = time.perf_counter() - cache_start
-                    
-                    # Update progress to show completion
-                    self.progress.emit(f"Updating cache: {total_cache}/{total_cache} entries")
-                    total_progress = total_files + total_cache
-                    total_work = total_files + total_cache
-                    self.tag_read_progress.emit(total_progress, total_work)
-                    
-                    total_duration = time.perf_counter() - self._scan_start_time
-                    logger.info(f"Cache update complete ({cache_duration:.2f}s), emitting scan_finished signal")
-                    self.scan_finished.emit(self._files_found, self._artist_counts)
-                    logger.info(f"Scan complete: {len(self._files_found)} files, {total_duration:.2f}s total")
-                except Exception as e:
-                    total_duration = time.perf_counter() - self._scan_start_time
-                    logger.error(f"Error during scan cache update: {e} (total: {total_duration:.2f}s)")
-                    raise
+                # Check stop flag after loop
+                if self._stop_requested:
+                    logger.info("Scan stopped by user")
+                    # Flush remaining batch before exiting
+                    if files_info_batch:
+                        conn = cache._get_connection()
+                        self._flush_batch_to_cache(files_info_batch, conn)
+                    cache.close()
+                    return
+                
+                # Phase 3: Flush final batch if any, then emit 100% progress
+                if files_info_batch:
+                    conn = cache._get_connection()
+                    self._flush_batch_to_cache(files_info_batch, conn)
+                    files_info_batch = []
+                
+                # Emit 100% progress to indicate completion
+                self.progress.emit(f"Updating cache: {total_files}/{total_files} entries")
+                self.tag_read_progress.emit(total_files, total_files)
+                
+                total_duration = time.perf_counter() - self._scan_start_time
+                logger.info(f"Cache update complete, emitting scan_finished signal")
+                self.scan_finished.emit(self._files_found, self._artist_counts)
+                logger.info(f"Scan complete: {len(self._files_found)} files, {total_duration:.2f}s total")
         except Exception as e:
             logger.error(f"Scan error: {e}")
             self.error.emit(f"Scan failed: {str(e)}")
@@ -296,6 +307,35 @@ class ScanWorker(QThread):
     def is_paused(self) -> bool:
         """Check if scan is paused."""
         return not self._pause_event.is_set()
+    
+    def _flush_batch_to_cache(self, batch: list, conn) -> None:
+        """Flush a batch of file info to the scan_cache table.
+        
+        Args:
+            batch: List of file info dicts to flush
+            conn: Database connection
+        """
+        if not batch:
+            return
+        
+        cache_data = [(info['path'], info['size'], info['mtime'],
+                       info.get('artist'), info.get('title'), time.time(),
+                       info.get('needs_fixing', 0), info.get('missing_artist', 0),
+                       info.get('missing_title', 0), info.get('suggested_artist'),
+                       info.get('suggested_title'),
+                       json.dumps(info.get('tag_data')) if info.get('tag_data') else None)
+                      for info in batch]
+        
+        conn.executemany(
+            """INSERT OR REPLACE INTO scan_cache
+               (path, size, mtime, artist, title, scan_time,
+                needs_fixing, missing_artist, missing_title,
+                suggested_artist, suggested_title, tag_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            cache_data
+        )
+        conn.commit()
+        logger.debug(f"Flushed {len(batch)} entries to cache")
 
 
 class MainWindow(QMainWindow):
@@ -530,6 +570,7 @@ class MainWindow(QMainWindow):
         self._scan_worker.tag_read_progress.connect(self._on_tag_read_progress)
         self._scan_worker.scan_total_work.connect(self._on_scan_total_work)
         self._scan_worker.scan_stats.connect(self._on_scan_stats)
+        self._scan_worker.partial_results_ready.connect(self._on_partial_results_ready)
         
         self._scan_worker.start()
         logger.info(f"Scan started for {directory}")
@@ -558,16 +599,25 @@ class MainWindow(QMainWindow):
             return
         
         self._scan_worker.stop()
-        self._scan_worker.wait()  # Wait for thread to finish
-        self._scan_worker = None
-        self._is_scanning = False
+        # Use quit() followed by wait() to avoid deadlock
+        self._scan_worker.quit()
+        self._scan_worker.wait(3000)  # Wait up to 3 seconds for thread to finish
         
-        # Reset UI
-        self._scan_btn.setEnabled(True)
-        self._pause_btn.setEnabled(False)
-        self._pause_btn.setText("Pause")
-        self._status_label.setText("Scan stopped")
-        logger.info("Scan stopped")
+        if self._scan_worker.isRunning():
+            # Worker still running - show status and disable button
+            self._status_label.setText("Stopping…")
+            self._stop_btn.setEnabled(False)
+        else:
+            # Worker finished cleanly
+            self._scan_worker = None
+            self._is_scanning = False
+            
+            # Reset UI
+            self._scan_btn.setEnabled(True)
+            self._pause_btn.setEnabled(False)
+            self._pause_btn.setText("Pause")
+            self._status_label.setText("Scan stopped")
+            logger.info("Scan stopped")
     
     def _open_settings(self) -> None:
         """Open settings dialog."""
@@ -640,6 +690,23 @@ class MainWindow(QMainWindow):
             )
         else:
             self._status_label.setText(f"Found {new_count + modified_count} files to process")
+    
+    def _on_partial_results_ready(self) -> None:
+        """Handle partial results ready signal - reload Fixer tab from cache."""
+        logger.debug("Partial results ready - reloading Fixer tab from cache")
+        # Reload Fixer tab from cache to show partial results
+        # We need to get the files from the cache and pass them to load_from_scan
+        # For now, just reload the existing data from cache
+        from musichouse.leaderboard_cache import LeaderboardCache
+        cache = LeaderboardCache()
+        conn = cache._get_connection()
+        cursor = conn.execute("SELECT path FROM scan_cache")
+        cached_paths = [Path(row[0]) for row in cursor.fetchall()]
+        cache.close()
+        
+        if cached_paths:
+            # Use empty artist_counts for partial reload
+            self._fixer_tab.load_from_scan(cached_paths, self._artist_counts)
     def _on_scan_finished(self, files: List[Path], artist_counts: Dict[str, int]) -> None:
         """Handle scan completion."""
         logger.info(f"Scan finished signal received: {len(files)} files, {len(artist_counts)} artists")
@@ -653,14 +720,16 @@ class MainWindow(QMainWindow):
         # Show final status with statistics if available
         if self._scan_stats_summary:
             new_count, modified_count, skipped_count = self._scan_stats_summary
-            total = new_count + modified_count + skipped_count
             if skipped_count > 0:
                 self._status_label.setText(
                     f"Scan complete: {len(files)} files processed "
                     f"({new_count} new, {modified_count} modified, {skipped_count} skipped)"
                 )
             else:
-                self._status_label.setText(f"Scan complete: {len(files)} files found")
+                self._status_label.setText(
+                    f"Scan complete: {len(files)} files found "
+                    f"({new_count} new, {modified_count} modified)"
+                )
         else:
             self._status_label.setText(f"Scan complete: {len(files)} files found")
         
@@ -745,10 +814,10 @@ class MainWindow(QMainWindow):
                 # Signal the worker to stop
                 self._scan_worker.stop()
                 
-                # Wait for the worker thread to finish with a timeout
-                # Use QThread::wait() with timeout to prevent indefinite blocking
-                timeout_ms = 5000  # 5 seconds timeout
-                self._scan_worker.wait(timeout_ms)
+                # Use quit() followed by wait() to avoid deadlock
+                # See project constraint: "QThread.wait called after start with an intervening time.sleep can deadlock"
+                self._scan_worker.quit()
+                self._scan_worker.wait(5000)  # Wait up to 5 seconds
                 
                 # Clean up the worker regardless of whether it finished
                 self._scan_worker = None
@@ -765,6 +834,11 @@ class MainWindow(QMainWindow):
             else:
                 event.ignore()
         else:
+            # Worker not running - safe to cleanup immediately
+            if self._scan_worker and not self._scan_worker.isRunning():
+                # Worker exists but is not running, clean it up
+                self._scan_worker = None
+                self._is_scanning = False
             event.accept()
         
         # Cleanup

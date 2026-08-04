@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QComboBox, QPushButton, QHeaderView, QLabel, QProgressBar, QMessageBox, QVBoxLayout, QTextEdit, QLineEdit, QCheckBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 
 from musichouse.parser import parse_filename, get_artist_from_folder
@@ -35,6 +35,10 @@ class FixerTab(QWidget):
         self._setup_select_all_header()
         # T43: Track failure details with error types
         self._failure_details: List[Tuple[str, str, str]] = []  # (filename, error_type, error_message)
+        # Search debounce timer (150ms)
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._apply_filter)
 
     def _setup_ui(self):
         """Setup the user interface."""
@@ -52,7 +56,7 @@ class FixerTab(QWidget):
         # Search input
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Search files...")
-        self._search_input.textChanged.connect(self._apply_filter)
+        self._search_input.textChanged.connect(self._on_search_changed)
         filter_layout.addWidget(self._search_input)
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
@@ -131,18 +135,6 @@ class FixerTab(QWidget):
             
             cache = LeaderboardCache(app_config.get_config_dir())
             conn = cache._get_connection()
-            cursor = conn.execute(
-                """SELECT path, artist, title,
-                       needs_fixing, missing_artist, missing_title,
-                       suggested_artist, suggested_title
-                  FROM scan_cache
-                 WHERE path IN ({})
-                   AND needs_fixing = 1
-                   AND (missing_artist = 1 OR missing_title = 1)""".format(
-                    ','.join('?' * len(files))
-                ),
-                [str(f) for f in files]
-            )
             
             # Get file paths as strings for SQL
             file_paths_str = [str(f) for f in files]
@@ -469,6 +461,8 @@ class FixerTab(QWidget):
 
     def fix_selected(self) -> None:
         """Apply fixes to selected files using worker thread."""
+        # Reset failure details at start of each fix run
+        self._failure_details = []
         # Get data indices from checked rows via UserRole
         checked_rows = self._get_checked_rows()
         if not checked_rows:
@@ -514,6 +508,9 @@ class FixerTab(QWidget):
         """Apply fixes to all files using worker thread."""
         import time
         start_time = time.perf_counter()
+        
+        # Reset failure details at start of each fix run
+        self._failure_details = []
         
         if not self._files_data:
             return
@@ -566,25 +563,25 @@ class FixerTab(QWidget):
         """Handle progress signal from worker."""
         self._progress_bar.setValue(index + 1)
     
-    def _on_file_fixed(self, filename: str, success: bool, error_type: Optional[str] = None):
+    def _on_file_fixed(self, file_path: str, success: bool, filename: str):
         """Handle file_fixed signal from worker.
         
         Args:
-            filename: Name of the file that was processed.
+            file_path: Full path of the file that was processed (as string).
             success: True if file was fixed successfully.
-            error_type: Error type if failed (e.g., "corrupted", "deleted", "locked", "readonly").
+            filename: Name of the file (for logging).
         """
         if success:
-            # Find the path for this filename
+            # Find the entry by matching path directly
             for entry in self._files_data:
-                if entry["filename"] == filename:
+                if str(entry["path"]) == file_path:
                     path = entry["path"] if isinstance(entry["path"], Path) else Path(entry["path"])
                     self._fixed_paths.append(path)
                     break
         else:
-            # Find the path for this filename
+            # Find the entry by matching path directly
             for entry in self._files_data:
-                if entry["filename"] == filename:
+                if str(entry["path"]) == file_path:
                     path = entry["path"] if isinstance(entry["path"], Path) else Path(entry["path"])
                     self._failed_paths.append(path)
                     break
@@ -809,4 +806,9 @@ class FixerTab(QWidget):
         """Show/hide empty state label."""
         if self._empty_label:
             self._empty_label.setVisible(not has_data)
+    
+    def _on_search_changed(self, text: str):
+        """Handle search input change with 150ms debounce."""
+        self._search_timer.stop()
+        self._search_timer.start(150)
     

@@ -27,7 +27,10 @@ class AITab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
-        self._ai_client = AIClient()
+        # Deferred: constructing AIClient() eagerly would call config.get_api_key(),
+        # which hits the OS keyring and prompts the user at startup. Build it on
+        # first use via _get_ai_client() instead.
+        self._ai_client: Optional[AIClient] = None
         self._artists_loaded = False
         self._all_artists = []  # Store all artists for filtering
         self._worker: Optional[AIWorker] = None
@@ -82,7 +85,7 @@ class AITab(QWidget):
         self._layout.addWidget(self._genre_label)
         
         # Empty state label
-        self._empty_label = QLabel("No AI suggestions yet. Click 'Generate Suggestions'.")
+        self._empty_label = QLabel("No AI suggestions yet. Click 'Get Similar Artists'.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet("color: gray; font-style: italic;")
         self._empty_label.setVisible(False)
@@ -138,6 +141,16 @@ class AITab(QWidget):
         if self._empty_label:
             self._empty_label.setVisible(not has_data)
 
+    def _get_ai_client(self) -> AIClient:
+        """Build AIClient lazily on first use.
+
+        Keyring access (config.get_api_key) is deferred until the user actually
+        requests AI suggestions, avoiding a startup prompt.
+        """
+        if self._ai_client is None:
+            self._ai_client = AIClient()
+        return self._ai_client
+
     def refresh_ai_client(self) -> None:
         """Recreate AIClient with fresh config from settings."""
         logger.info("Refreshing AIClient with updated settings")
@@ -192,7 +205,7 @@ class AITab(QWidget):
         self._set_loading_state(True)
 
         # Create and configure worker
-        self._worker = AIWorker(artist, self._ai_client)
+        self._worker = AIWorker(artist, self._get_ai_client())
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.progress.connect(self._on_worker_progress)
         self._worker.error.connect(self._on_worker_error)

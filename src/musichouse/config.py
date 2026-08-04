@@ -63,18 +63,15 @@ def _load_config() -> Dict:
     """Load config with mtime check.
     
     Returns cached config if file hasn't changed since last load.
-    Merges with defaults and adds API key from keyring.
+    Merges with defaults. API key is NOT included — call get_api_key() separately.
     """
     global _config_cache, _cache_mtime
     
     config_path = get_config_path()
     
-    # File doesn't exist - return defaults with API key from keyring
+    # File doesn't exist - return defaults (no API key)
     if not config_path.exists():
         _config_cache = DEFAULT_CONFIG.copy()
-        api_key = get_api_key_from_keyring()
-        if api_key is not None:
-            _config_cache["api_key"] = api_key
         _cache_mtime = None
         return _config_cache
     
@@ -93,11 +90,6 @@ def _load_config() -> Dict:
             # Invalid JSON or IO error - return defaults
             _config_cache = DEFAULT_CONFIG.copy()
             _cache_mtime = current_mtime
-    
-    # Add API key from keyring
-    api_key = get_api_key_from_keyring()
-    if api_key is not None:
-        _config_cache["api_key"] = api_key
     
     return _config_cache
 
@@ -299,8 +291,16 @@ def get_model() -> str:
 
 
 def get_api_key() -> str:
-    config = _load_config()
-    return config.get("api_key", DEFAULT_CONFIG["api_key"])
+    """Get API key from keyring (or fallback).
+    
+    This is the ONLY function that calls get_api_key_from_keyring().
+    Other getters (_load_config) do NOT touch the keyring.
+    
+    Returns:
+        API key string or empty string if not set.
+    """
+    api_key = get_api_key_from_keyring()
+    return api_key if api_key is not None else ""
 
 
 def get_last_directory() -> str:

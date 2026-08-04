@@ -21,7 +21,7 @@ class TagFixWorker(QThread):
     
     # Signals
     progress = pyqtSignal(int, str)  # (file index, filename)
-    file_fixed = pyqtSignal(str, bool)  # (filename, success)
+    file_fixed = pyqtSignal(str, bool, str)  # (file_path, success, filename)
     failures = pyqtSignal(list)  # list of (filename, error_type, error_message) tuples
     finished = pyqtSignal(int, int)  # (success count, failure count)
     
@@ -90,7 +90,7 @@ class TagFixWorker(QThread):
                 
                 if success:
                     success_count += 1
-                    self.file_fixed.emit(file_path.name, True)
+                    self.file_fixed.emit(str(file_path), True, file_path.name)
                     # Log already fixed only if we skipped due to cache match
                     if cached_info and cached_info.get('tag_data'):
                         cached_artist = cached_info['tag_data'].get('artist', '') or ''
@@ -103,7 +103,8 @@ class TagFixWorker(QThread):
                         logger.info(f"Fixed: {file_path.name}")
                 else:
                     failure_count += 1
-                    self.file_fixed.emit(file_path.name, False)
+                    self.file_fixed.emit(str(file_path), False, file_path.name)
+                    
                     # Guard against unbound error (Fix M6)
                     error_type = type(error).__name__ if error else "Unknown"
                     error_msg = str(error) if error else "Unknown error"
@@ -117,12 +118,12 @@ class TagFixWorker(QThread):
             remaining = len(self._files_data) - success_count - failure_count
             failure_count += remaining
             for i in range(remaining):
-                if idx + 1 + i < len(self._files_data):
-                    entry = self._files_data[idx + 1 + i]
+                if idx + i < len(self._files_data):
+                    entry = self._files_data[idx + i]
                     file_path = entry["path"]
                     if isinstance(file_path, str):
                         file_path = Path(file_path)
-                    self.file_fixed.emit(file_path.name, False)
+                    
                     failure_list.append((file_path.name, type(e).__name__, str(e)))
         
         finally:
