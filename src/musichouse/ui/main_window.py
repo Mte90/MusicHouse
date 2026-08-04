@@ -591,6 +591,7 @@ class MainWindow(QMainWindow):
             self._pause_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
             self._status_label.setText("Scan paused")
             logger.debug("Scan paused")
+            self._fixer_tab._load_saved_files()
     
     def _stop_scan(self) -> None:
         """Stop the current scan."""
