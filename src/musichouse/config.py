@@ -108,6 +108,7 @@ def update_config(partial: Dict) -> None:
         else:
             # For api_key, update both config and keyring
             config[key] = value
+            set_api_key_in_keyring(value)
     _save_config(config)
 
 
@@ -235,9 +236,6 @@ def _save_config(config: Dict) -> None:
     # Ensure config directory exists
     config_path = get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Store API key in keyring
-    set_api_key_in_keyring(config["api_key"])
 
     # Create config dict without api_key for JSON storage
     config_for_json = {

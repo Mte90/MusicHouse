@@ -108,8 +108,13 @@ class FixerTab(QWidget):
         self._fix_all_btn.clicked.connect(self.auto_fix_all)
         self._fix_all_btn.setToolTip("Automatically fix ALL files without review. Uses suggested values from filename parsing for all missing tags.")
 
+        self._reset_db_btn = QPushButton("Reset DB")
+        self._reset_db_btn.clicked.connect(self._reset_database)
+        self._reset_db_btn.setToolTip("Delete the scan cache database and reload. All scanned file data will be lost; the next scan will rebuild it from scratch.")
+
         button_layout.addWidget(self._fix_selected_btn)
         button_layout.addWidget(self._fix_all_btn)
+        button_layout.addWidget(self._reset_db_btn)
 
         layout.addLayout(button_layout)
 
@@ -223,8 +228,60 @@ class FixerTab(QWidget):
                 self._update_empty_state(False)
         except Exception as e:
             logger.error(f"Error loading saved files from DB: {e}")
-            self._update_empty_state(False)
-    
+
+    def _reset_database(self) -> None:
+        """Delete the scan cache database file and reload the table.
+
+        Asks for confirmation first. Removes the SQLite database plus its
+        WAL and shared-memory sidecar files, then reloads the (now empty)
+        file list.
+        """
+        from musichouse import config as app_config
+        from musichouse.leaderboard_cache import LeaderboardCache
+
+        db_path = app_config.get_config_dir() / "leaderboard.db"
+        sidecars = [
+            db_path,
+            db_path.with_suffix(".db-wal"),
+            db_path.with_suffix(".db-shm"),
+        ]
+
+        reply = QMessageBox.question(
+            self,
+            "Reset Database",
+            f"This will permanently delete the scan cache at:\n{db_path}\n\n"
+            "All scanned file data will be lost. The next scan will rebuild it.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            cache = LeaderboardCache(app_config.get_config_dir())
+            cache.close()
+        except Exception as e:
+            logger.warning(f"Could not close cache before reset: {e}")
+
+        for path in sidecars:
+            try:
+                if path.exists():
+                    path.unlink()
+                    logger.info(f"Removed {path}")
+            except OSError as e:
+                logger.error(f"Failed to remove {path}: {e}")
+
+        self._files_data = []
+        self._apply_filter()
+        self._update_empty_state(False)
+        QMessageBox.information(
+            self,
+            "Database Reset",
+            "The scan cache database has been deleted.\n"
+            "Run a scan to rebuild it.",
+        )
+
     def _setup_select_all_header(self):
         """Add Select All checkbox to table header."""
         if not self._select_all_cb:

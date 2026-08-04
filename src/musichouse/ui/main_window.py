@@ -374,7 +374,6 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         
         # Menu bar
-        self._setup_menubar()
         
         # Toolbar
         self._setup_toolbar()
