@@ -10,12 +10,6 @@ from PyQt6.QtCore import Qt, QTimer
 
 from musichouse import log_setup as logging
 from musichouse.ai_client import AIClient
-from musichouse.error_handling import (
-    APIKeyError,
-    APITimeoutError,
-    APIParseError,
-    APIConnectionError
-)
 from musichouse.ui.ai_worker import AIWorker
 
 logger = logging.get_logger(__name__)
@@ -123,7 +117,6 @@ class AITab(QWidget):
             filtered = [a for a in self._all_artists if search_text in a.lower()]
         
         # Update combo box
-        current_selection = self._artist_combo.currentText()
         self._artist_combo.clear()
         self._artist_combo.addItem("Select an artist...")
         

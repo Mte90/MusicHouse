@@ -73,6 +73,6 @@ def load_mp3_safely(file_path: Path) -> Optional["eyed3.AudioFile"]:
         return None
 
 
-from musichouse.utils.lock import SingleInstanceLock
+from musichouse.utils.lock import SingleInstanceLock  # noqa: E402
 
 __all__ = ["silence_stderr", "load_mp3_safely", "SingleInstanceLock"]

@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 
-import eyed3
 
 from musichouse import log_setup as logging
 from musichouse.utils import load_mp3_safely

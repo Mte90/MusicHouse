@@ -4,10 +4,7 @@ Tests for write_tags() function and TagPreviewDialog class.
 Uses mocking to avoid modifying real MP3 files.
 """
 
-import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-import eyed3
 
 from musichouse.tag_writer import write_tags, TagPreviewDialog
 
@@ -382,7 +379,6 @@ class TestWriteTagsEdgeCases:
             # Simulate auto_fix_all behavior: write edited value, not suggested
             # Edited value (from table cell after user edit)
             edited_artist = "Edited Artist"
-            suggested_artist = "Suggested Artist"  # From filename parsing
             
             # auto_fix_all should write the edited value
             result = write_tags(mp3_file, edited_artist, "Test Title")

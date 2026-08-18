@@ -4,11 +4,9 @@ Tests for TagFixWorker and TagUpdateWorker QThread workers.
 Uses mocking to avoid modifying real MP3 files and to test edge cases.
 """
 
-import pytest
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from PyQt6.QtCore import QThread
+from unittest.mock import patch
 
 from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse.ui.tag_fix_worker import TagFixWorker, TagUpdateWorker

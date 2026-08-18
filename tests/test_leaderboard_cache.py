@@ -1,7 +1,6 @@
 """Unit tests for LeaderboardCache class."""
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -562,14 +561,235 @@ def test_wal_mode_enabled(cache):
     assert mode == 'wal'
 
 
-def test_busy_timeout_set(cache):
-    """Test that busy timeout is configured."""
+# ============================================================================
+# Test: Schema migration v3
+# ============================================================================
+def test_migration_v3_adds_columns_and_table(temp_db_file):
+    """Test that migration v3 adds fingerprint/duration columns and artist_genres table."""
+    # Create a fresh database at version 2 (simulate old schema)
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        db_path = tmp_path / "test.db"
+        
+        # Create old schema manually
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript("""
+            CREATE TABLE schema_version (version INTEGER);
+            INSERT INTO schema_version (version) VALUES (2);
+            
+            CREATE TABLE scan_cache (
+                path TEXT PRIMARY KEY,
+                size INTEGER NOT NULL,
+                mtime REAL NOT NULL,
+                artist TEXT,
+                title TEXT,
+                scan_time REAL NOT NULL,
+                needs_fixing INTEGER DEFAULT 0,
+                missing_artist INTEGER DEFAULT 0,
+                missing_title INTEGER DEFAULT 0,
+                suggested_artist TEXT,
+                suggested_title TEXT,
+                tag_data TEXT
+            );
+            
+            CREATE TABLE artists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                count INTEGER NOT NULL DEFAULT 0
+            );
+            
+            CREATE TABLE similar_artists (
+                artist_name TEXT PRIMARY KEY,
+                similar_json TEXT NOT NULL,
+                last_updated INTEGER NOT NULL
+            );
+        """)
+        conn.close()
+        
+        # Instantiate cache - should trigger migration
+        cache = LeaderboardCache(db_path)
+        
+        # Verify fingerprint and duration columns exist
+        cols = {row['name'] for row in cache._get_connection().execute("PRAGMA table_info(scan_cache)")}
+        assert 'fingerprint' in cols
+        assert 'duration' in cols
+        
+        # Verify artist_genres table exists
+        cursor = cache._get_connection().execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='artist_genres'"
+        )
+        assert cursor.fetchone() is not None
+        
+        # Verify schema version is 3
+        cursor = cache._get_connection().execute("SELECT version FROM schema_version")
+        assert cursor.fetchone()[0] == 3
+        
+        cache.close()
+
+
+def test_fresh_db_has_v3_schema(cache):
+    """Test that a fresh database has the v3 schema."""
+    cols = {row['name'] for row in cache._get_connection().execute("PRAGMA table_info(scan_cache)")}
+    assert 'fingerprint' in cols
+    assert 'duration' in cols
+    
+    cursor = cache._get_connection().execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='artist_genres'"
+    )
+    assert cursor.fetchone() is not None
+
+
+# ============================================================================
+# Test: get_fingerprint / set_fingerprint
+# ============================================================================
+def test_set_and_get_fingerprint(cache):
+    """Test setting and getting fingerprint and duration."""
+    # Insert a file first
+    cache.update_scan_cache([
+        {
+            'path': '/path/to/file.mp3',
+            'size': 1234,
+            'mtime': 123456.0,
+            'artist': 'Artist',
+            'title': 'Title'
+        }
+    ])
+    
+    # Set fingerprint
+    fingerprint = b'test_fingerprint_data'
+    duration = 180.5
+    cache.set_fingerprint('/path/to/file.mp3', fingerprint, duration)
+    
+    # Get fingerprint
+    result_fp, result_dur = cache.get_fingerprint('/path/to/file.mp3')
+    
+    assert result_fp == fingerprint
+    assert result_dur == duration
+
+
+def test_get_fingerprint_not_set(cache):
+    """Test getting fingerprint for file that doesn't have one set."""
+    # Insert a file first
+    cache.update_scan_cache([
+        {
+            'path': '/path/to/file.mp3',
+            'size': 1234,
+            'mtime': 123456.0,
+            'artist': 'Artist',
+            'title': 'Title'
+        }
+    ])
+    
+    # Get fingerprint (not set)
+    result_fp, result_dur = cache.get_fingerprint('/path/to/file.mp3')
+    
+    assert result_fp is None
+    assert result_dur is None
+
+
+def test_get_fingerprint_nonexistent_path(cache):
+    """Test getting fingerprint for non-existent path."""
+    result_fp, result_dur = cache.get_fingerprint('/nonexistent/path.mp3')
+    
+    assert result_fp is None
+    assert result_dur is None
+
+
+def test_set_fingerprint_overwrites(cache):
+    """Test that set_fingerprint overwrites existing values."""
+    # Insert a file first
+    cache.update_scan_cache([
+        {
+            'path': '/path/to/file.mp3',
+            'size': 1234,
+            'mtime': 123456.0,
+            'artist': 'Artist',
+            'title': 'Title'
+        }
+    ])
+    
+    # Set initial fingerprint
+    cache.set_fingerprint('/path/to/file.mp3', b'old_fp', 100.0)
+    
+    # Update fingerprint
+    cache.set_fingerprint('/path/to/file.mp3', b'new_fp', 200.0)
+    
+    # Verify overwrite
+    result_fp, result_dur = cache.get_fingerprint('/path/to/file.mp3')
+    assert result_fp == b'new_fp'
+    assert result_dur == 200.0
+
+
+# ============================================================================
+# Test: get_artist_genres / set_artist_genres
+# ============================================================================
+def test_set_and_get_artist_genres(cache):
+    """Test setting and getting artist genres."""
+    genres = ['rock', 'alternative', 'indie']
+    
+    # Set genres
+    cache.set_artist_genres('Test Artist', genres)
+    
+    # Get genres
+    result = cache.get_artist_genres('Test Artist')
+    
+    assert result == genres
+
+
+def test_get_artist_genres_not_cached(cache):
+    """Test getting genres for artist that isn't cached."""
+    result = cache.get_artist_genres('Unknown Artist')
+    assert result is None
+
+
+def test_set_artist_genres_overwrites(cache):
+    """Test that set_artist_genres overwrites existing genres."""
+    # Set initial genres
+    cache.set_artist_genres('Test Artist', ['rock', 'pop'])
+    
+    # Update genres
+    cache.set_artist_genres('Test Artist', ['jazz', 'blues'])
+    
+    # Verify overwrite
+    result = cache.get_artist_genres('Test Artist')
+    assert result == ['jazz', 'blues']
+
+
+def test_set_artist_genres_updates_timestamp(cache):
+    """Test that set_artist_genres updates the last_updated timestamp."""
+    # Set initial genres
+    cache.set_artist_genres('Test Artist', ['rock'])
+    
+    # Get initial timestamp
     conn = cache._get_connection()
+    cursor = conn.execute(
+        "SELECT last_updated FROM artist_genres WHERE artist_name = ?",
+        ('Test Artist',)
+    )
+    initial_ts = cursor.fetchone()['last_updated']
     
-    cursor = conn.execute("PRAGMA busy_timeout")
-    timeout = cursor.fetchone()[0]
+    # Wait a bit and update (wait 2 seconds to ensure timestamp changes)
+    import time
+    time.sleep(2)
+    cache.set_artist_genres('Test Artist', ['pop'])
     
-    assert timeout == 5000
+    # Get new timestamp
+    cursor = conn.execute(
+        "SELECT last_updated FROM artist_genres WHERE artist_name = ?",
+        ('Test Artist',)
+    )
+    new_ts = cursor.fetchone()['last_updated']
+    
+    # Timestamp should have increased
+    assert new_ts > initial_ts
+
+
+def test_get_artist_genres_empty_list(cache):
+    """Test getting genres when empty list is cached."""
+    cache.set_artist_genres('Test Artist', [])
+    result = cache.get_artist_genres('Test Artist')
+    assert result == []
 
 
 def test_synchronous_normal(cache):

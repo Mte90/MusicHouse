@@ -1,10 +1,7 @@
 """Minimal tests for config module."""
-import json
-import pytest
 from pathlib import Path
-from unittest.mock import patch
 
-from musichouse.config import get_config_dir, get_config_path, DEFAULT_CONFIG
+from musichouse.config import get_config_dir, get_config_path
 
 
 def test_get_config_dir_returns_path():

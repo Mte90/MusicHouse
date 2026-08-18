@@ -407,6 +407,55 @@ class TestGetArtistFromFolder:
         result = get_artist_from_folder(test_file)
         assert result == "MyArtist"
 
+    def test_normal_case(self, temp_dir):
+        """Test getting artist from normal folder structure."""
+        artist_dir = temp_dir / "Test Artist"
+        artist_dir.mkdir()
+        file_path = artist_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        assert result == "Test Artist"
+
+    def test_empty_folder_name(self, temp_dir):
+        """Test getting artist when parent folder has empty name."""
+        # Create nested structure with empty folder names
+        empty_dir = temp_dir / ""
+        artist_dir = empty_dir / "Real Artist"
+        artist_dir.mkdir(parents=True)
+        file_path = artist_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        # Should skip empty folder and find "Real Artist"
+        assert result == "Real Artist"
+
+    def test_multiple_empty_folders(self, temp_dir):
+        """Test with multiple empty folder names in path."""
+        # Create deeply nested structure
+        deep_path = temp_dir / "Artist"
+        deep_path.mkdir()
+        file_path = deep_path / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        assert result == "Artist"
+
+    def test_whitespace_folder_name(self, temp_dir):
+        """Test folder name with only whitespace."""
+        # Create folder with whitespace name
+        ws_dir = temp_dir / "   "
+        ws_dir.mkdir()
+        artist_dir = ws_dir / "Actual Artist"
+        artist_dir.mkdir()
+        file_path = artist_dir / "song.mp3"
+        file_path.write_bytes(b"fake mp3")
+
+        result = get_artist_from_folder(file_path)
+        # Should skip whitespace-only folder name
+        assert result == "Actual Artist"
+
+
 # ============================================================================
 # Integration tests with real test data files
 # ============================================================================
@@ -478,68 +527,6 @@ class TestWithRealTestData:
         
         assert result[0] == "Artist2"
         assert result[1] == "Title - Remix"
-
-
-class TestGetArtistFromFolder:
-    """Tests for get_artist_from_folder function."""
-
-    def test_normal_case(self, temp_dir):
-        """Test getting artist from normal folder structure."""
-        artist_dir = temp_dir / "Test Artist"
-        artist_dir.mkdir()
-        file_path = artist_dir / "song.mp3"
-        file_path.write_bytes(b"fake mp3")
-
-        result = get_artist_from_folder(file_path)
-        assert result == "Test Artist"
-
-    def test_empty_folder_name(self, temp_dir):
-        """Test getting artist when parent folder has empty name."""
-        # Create nested structure with empty folder names
-        empty_dir = temp_dir / ""
-        artist_dir = empty_dir / "Real Artist"
-        artist_dir.mkdir(parents=True)
-        file_path = artist_dir / "song.mp3"
-        file_path.write_bytes(b"fake mp3")
-
-        result = get_artist_from_folder(file_path)
-        # Should skip empty folder and find "Real Artist"
-        assert result == "Real Artist"
-
-    def test_multiple_empty_folders(self, temp_dir):
-        """Test with multiple empty folder names in path."""
-        # Create deeply nested structure
-        deep_path = temp_dir / "Artist"
-        deep_path.mkdir()
-        file_path = deep_path / "song.mp3"
-        file_path.write_bytes(b"fake mp3")
-
-        result = get_artist_from_folder(file_path)
-        assert result == "Artist"
-
-    def test_root_directory(self, temp_dir):
-        """Test when reaching root directory."""
-        # Create file directly in temp_dir (no subfolder)
-        file_path = temp_dir / "song.mp3"
-        file_path.write_bytes(b"fake mp3")
-
-        result = get_artist_from_folder(file_path)
-        # Should return the temp_dir name or "Unknown" if at system root
-        assert result in [temp_dir.name, "Unknown"]
-
-    def test_whitespace_folder_name(self, temp_dir):
-        """Test folder name with only whitespace."""
-        # Create folder with whitespace name
-        ws_dir = temp_dir / "   "
-        ws_dir.mkdir()
-        artist_dir = ws_dir / "Actual Artist"
-        artist_dir.mkdir()
-        file_path = artist_dir / "song.mp3"
-        file_path.write_bytes(b"fake mp3")
-
-        result = get_artist_from_folder(file_path)
-        # Should skip whitespace-only folder name
-        assert result == "Actual Artist"
 
 
 

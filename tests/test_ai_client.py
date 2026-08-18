@@ -7,13 +7,11 @@ All API calls are mocked using unittest.mock.patch.
 import json
 import socket
 from unittest.mock import patch, MagicMock
-from pathlib import Path
 
 import pytest
 
 from musichouse.ai_client import AIClient
 from musichouse.error_handling import (
-    APIKeyError,
     APITimeoutError,
     APIParseError,
     APIConnectionError
@@ -436,3 +434,196 @@ class TestResponseParseError:
             # Should raise APIParseError
             with pytest.raises(APIParseError):
                 ai_client_with_key.infer_tags("file.mp3")
+
+
+# ============================================================================
+# Test: analyze_folder_organization()
+# ============================================================================
+class TestAnalyzeFolderOrganization:
+    """Tests for AIClient.analyze_folder_organization() method."""
+
+    def test_analyze_folder_organization_fallback(self, ai_client_no_key):
+        """Test analyze_folder_organization returns empty results when no API key."""
+        folder_structure = {
+            "/music/Rock": [
+                {"file": "song1.mp3", "artist": "Iron Maiden"},
+            ],
+        }
+        artist_genres = {"Iron Maiden": ["heavy metal"]}
+        
+        result = ai_client_no_key.analyze_folder_organization(folder_structure, artist_genres)
+        
+        assert "moves" in result
+        assert "renames" in result
+        assert result == {"moves": [], "renames": []}
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_analyze_folder_organization_valid_json(self, mock_urlopen, ai_client_with_key):
+        """Test analyze_folder_organization with valid JSON response."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps({
+                            "moves": [
+                                {"from": "/music/Rock/song1.mp3", "to": "/music/Heavy Metal/song1.mp3", "reason": "Artist is heavy metal"}
+                            ],
+                            "renames": []
+                        })
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        folder_structure = {
+            "/music/Rock": [{"file": "song1.mp3", "artist": "Iron Maiden"}]
+        }
+        artist_genres = {"Iron Maiden": ["heavy metal"]}
+        result = ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
+
+        assert "moves" in result
+        assert "renames" in result
+        assert len(result["moves"]) == 1
+        assert result["moves"][0]["from"] == "/music/Rock/song1.mp3"
+        mock_urlopen.assert_called_once()
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_analyze_folder_organization_markdown_code_blocks(self, mock_urlopen, ai_client_with_key):
+        """Test analyze_folder_organization handles markdown code blocks in response."""
+        mock_response = MagicMock()
+        # LLM returns JSON wrapped in markdown code blocks
+        content_with_blocks = """```json
+{
+  "moves": [
+    {"from": "/music/Rock/song1.mp3", "to": "/music/Metal/song1.mp3", "reason": "Genre mismatch"}
+  ],
+  "renames": []
+}
+```"""
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": content_with_blocks
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        folder_structure = {
+            "/music/Rock": [{"file": "song1.mp3", "artist": "Iron Maiden"}]
+        }
+        artist_genres = {"Iron Maiden": ["heavy metal"]}
+        result = ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
+
+        # Should parse successfully despite markdown blocks
+        assert "moves" in result
+        assert "renames" in result
+        assert len(result["moves"]) == 1
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_analyze_folder_organization_invalid_json_returns_empty(self, mock_urlopen, ai_client_with_key):
+        """Test analyze_folder_organization returns empty results on invalid JSON."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "This is not valid JSON at all"
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        folder_structure = {
+            "/music/Rock": [{"file": "song1.mp3", "artist": "Iron Maiden"}]
+        }
+        artist_genres = {"Iron Maiden": ["heavy metal"]}
+        
+        # Should NOT raise, should return empty results
+        result = ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
+        
+        assert result == {"moves": [], "renames": []}
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_analyze_folder_organization_empty_response_returns_empty(self, mock_urlopen, ai_client_with_key):
+        """Test analyze_folder_organization returns empty results on empty response."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": ""
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        folder_structure = {
+            "/music/Rock": [{"file": "song1.mp3", "artist": "Iron Maiden"}]
+        }
+        artist_genres = {"Iron Maiden": ["heavy metal"]}
+        
+        result = ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
+        
+        assert result == {"moves": [], "renames": []}
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_analyze_folder_organization_prompt_includes_data(self, mock_urlopen, ai_client_with_key):
+        """Test that prompt includes folder structure and artist genres."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps({"moves": [], "renames": []})
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        folder_structure = {
+            "/music/Rock": [{"file": "song1.mp3", "artist": "Iron Maiden"}]
+        }
+        artist_genres = {"Iron Maiden": ["heavy metal"]}
+        
+        ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
+        
+        # Verify the request was made
+        mock_urlopen.assert_called_once()
+        # Get the request data to check prompt content
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]  # First positional arg is the Request object
+        request_body = json.loads(req.data.decode('utf-8'))
+        user_content = request_body["messages"][1]["content"]
+        
+        # Verify prompt includes the folder structure and artist genres
+        assert "/music/Rock" in user_content
+        assert "Iron Maiden" in user_content
+        assert "heavy metal" in user_content
+
+    def test_analyze_folder_organization_api_error_returns_empty(self, ai_client_with_key):
+        """Test analyze_folder_organization returns empty results on API error."""
+        with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
+            mock_urlopen.side_effect = Exception("Connection error")
+
+            folder_structure = {
+                "/music/Rock": [{"file": "song1.mp3", "artist": "Iron Maiden"}]
+            }
+            artist_genres = {"Iron Maiden": ["heavy metal"]}
+            
+            # Should NOT raise, should return empty results
+            result = ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
+            
+            assert result == {"moves": [], "renames": []}

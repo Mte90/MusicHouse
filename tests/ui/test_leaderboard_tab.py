@@ -4,8 +4,7 @@ Run with: QT_QPA_PLATFORM=offscreen pytest tests/ui/test_leaderboard_tab.py -v
 """
 import pytest
 from unittest.mock import patch
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtWidgets import QHeaderView, QTableWidgetItem
+from PyQt6.QtWidgets import QHeaderView
 from typing import List, Tuple
 
 pytestmark = pytest.mark.ui

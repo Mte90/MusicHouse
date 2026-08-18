@@ -8,10 +8,10 @@ import eyed3
 
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon, QShortcut, QKeySequence
+from PyQt6.QtGui import QAction, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QToolBar, QStatusBar, QLabel, QProgressBar,
+    QLabel, QProgressBar,
     QTabWidget, QPushButton, QFileDialog, QMessageBox,
     QStyle
 )
@@ -23,6 +23,8 @@ from musichouse.leaderboard import Leaderboard
 from musichouse.ui.fixer_tab import FixerTab
 from musichouse.ui.leaderboard_tab import LeaderboardTab
 from musichouse.ui.ai_tab import AITab
+from musichouse.ui.duplicates_tab import DuplicatesTab
+from musichouse.ui.organize_tab import OrganizeTab
 from musichouse.ui.settings_dialog import SettingsDialog
 
 logger = logging.get_logger(__name__)
@@ -272,7 +274,7 @@ class ScanWorker(QThread):
                 self.tag_read_progress.emit(total_files, total_files)
                 
                 total_duration = time.perf_counter() - self._scan_start_time
-                logger.info(f"Cache update complete, emitting scan_finished signal")
+                logger.info("Cache update complete, emitting scan_finished signal")
                 self.scan_finished.emit(self._files_found, self._artist_counts)
                 logger.info(f"Scan complete: {len(self._files_found)} files, {total_duration:.2f}s total")
         except Exception as e:
@@ -495,6 +497,14 @@ class MainWindow(QMainWindow):
         # DPI-safe: use minimum height based on font metrics instead of fixed height
         font_height = self._status_label.fontMetrics().height()
         self._status_label.setMinimumHeight(font_height + 4)
+        
+        # Add fingerprint mode indicator
+        from musichouse.fingerprint import is_fpcalc_available
+        fp_available = is_fpcalc_available()
+        mode_text = "🔍 Duplicate mode: Fingerprint (fpcalc detected)" if fp_available else "🔍 Duplicate mode: Metadata only (fpcalc not found)"
+        self._mode_indicator = QLabel(mode_text)
+        self._mode_indicator.setToolTip("When fpcalc is available, duplicate detection uses audio fingerprinting for higher accuracy. Otherwise, it falls back to metadata (artist + title) matching.")
+        self.statusBar().addPermanentWidget(self._mode_indicator)
     
     def _setup_progress_bar(self) -> None:
         """Set up the progress bar."""
@@ -517,6 +527,19 @@ class MainWindow(QMainWindow):
         # AI tab
         self._ai_tab = AITab()
         self._tab_widget.addTab(self._ai_tab, "AI Suggestions")
+        
+        # Duplicates tab
+        from musichouse.leaderboard_cache import LeaderboardCache
+        cache = LeaderboardCache()
+        self._duplicates_tab = DuplicatesTab(cache)
+        self._tab_widget.addTab(self._duplicates_tab, "Duplicates")
+        
+        # Organize tab
+        from musichouse.ai_client import AIClient
+        ai_client = AIClient()
+        base_path = Path(config.get_last_directory()) if config.get_last_directory() else Path.home()
+        self._organize_tab = OrganizeTab(cache, ai_client, base_path)
+        self._tab_widget.addTab(self._organize_tab, "Organize")
     
     def _connect_signals(self) -> None:
         """Connect signals from ScanWorker to slots."""
@@ -545,7 +568,7 @@ class MainWindow(QMainWindow):
         self._is_scanning = True
         
         # Update UI
-        self._status_label.setText(f"Scanning filesystem... (0 files found)")
+        self._status_label.setText("Scanning filesystem... (0 files found)")
         self._progress_bar.setVisible(True)
         self._progress_bar.setRange(0, 0)
         self._scan_btn.setEnabled(False)

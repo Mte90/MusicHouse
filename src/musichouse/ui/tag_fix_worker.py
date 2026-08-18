@@ -1,7 +1,7 @@
 """QThread worker for tag writes to prevent UI freezing."""
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 

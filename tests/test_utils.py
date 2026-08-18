@@ -9,11 +9,8 @@ targeting ≥95% code coverage. Tests cover:
 """
 import io
 import sys
-import os
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from musichouse.utils import silence_stderr, load_mp3_safely
 

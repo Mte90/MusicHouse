@@ -139,7 +139,7 @@ def set_api_key_in_keyring(key: str) -> None:
     try:
         keyring.set_password(SERVICE_NAME, API_KEY_USERNAME, key)
         _fallback_api_key = key
-    except Exception as e:
+    except Exception:
         # Fallback to in-memory storage if keyring is unavailable
         # This happens in headless environments or when keyring is locked
         _fallback_api_key = key

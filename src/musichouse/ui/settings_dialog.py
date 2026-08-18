@@ -4,7 +4,6 @@ from typing import Optional
 
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QValidator
 
 from musichouse.config import get_endpoint, get_model, get_api_key, set_endpoint, set_model, set_api_key, get_exclude_dirs, set_exclude_dirs
 from musichouse.ai_client import AIClient
@@ -108,7 +107,6 @@ class SettingsDialog(QtWidgets.QDialog):
         """
         endpoint = self.endpointLineEdit.text().strip()
         model = self.modelLineEdit.text().strip()
-        api_key = self.apiKeyLineEdit.text()
 
         # Validate endpoint (must be a valid URL)
         if not endpoint:

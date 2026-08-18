@@ -1,7 +1,6 @@
 """AI client for MusicHouse."""
 
 import json
-import socket
 import urllib.error
 import urllib.request
 from typing import Dict, Any, List, Optional
@@ -9,7 +8,6 @@ from typing import Dict, Any, List, Optional
 from musichouse import log_setup as logging
 from musichouse import config
 from musichouse.error_handling import (
-    APIKeyError,
     APITimeoutError,
     APIParseError,
     APIConnectionError
@@ -54,16 +52,17 @@ class AIClient:
             return result
         return result.get("genres", [])
 
-    def _call_api(self, prompt: str) -> Dict[str, Any]:
+    def _call_api(self, prompt: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
         """Call the API endpoint."""
         if not self.api_key:
             logger.warning("No API key configured")
             return self._get_fallback_response(prompt)
 
+        system_content = system_prompt or "Return valid JSON only."
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3
@@ -91,7 +90,7 @@ class AIClient:
             logger.error(error_msg)
             raise APIConnectionError(error_msg)
             
-        except TimeoutError as e:
+        except TimeoutError:
             # Request timed out
             error_msg = "Request timed out after 30s"
             logger.error(error_msg)
@@ -104,7 +103,7 @@ class AIClient:
             logger.error(error_msg)
             raise APIConnectionError(error_msg)
             
-        except ConnectionRefusedError as e:
+        except ConnectionRefusedError:
             # Connection refused
             error_msg = "Cannot connect to API: Connection refused"
             logger.error(error_msg)
@@ -177,6 +176,63 @@ class AIClient:
             error_msg = f"Failed to parse AI response: {e}"
             logger.error(error_msg)
             raise APIParseError(error_msg)
+
+    def analyze_folder_organization(
+        self, folder_structure: Dict[str, List[Dict[str, str]]], artist_genres: Dict[str, List[str]]
+    ) -> Dict[str, List[Dict[str, str]]]:
+        """
+        Ask the LLM to suggest file moves and folder renames based on folder structure
+        and artist genre data from MusicBrainz.
+
+        Args:
+            folder_structure: dict mapping folder paths to lists of files with metadata.
+                Example: {
+                    "/music/Rock": [
+                        {"file": "song1.mp3", "artist": "Iron Maiden"},
+                        {"file": "song2.mp3", "artist": "Judas Priest"},
+                    ],
+                    "/music/Metallica": [
+                        {"file": "song3.mp3", "artist": "Metallica"},
+                    ],
+                }
+            artist_genres: dict mapping artist names to genre lists.
+                Example: {"Iron Maiden": ["heavy metal", "NWOBHM"], ...}
+
+        Returns:
+            dict with keys "moves" and "renames":
+            {
+                "moves": [{"from": str, "to": str, "reason": str}, ...],
+                "renames": [{"from": str, "to": str, "reason": str}, ...],
+            }
+        """
+        system_prompt = "You are a music library organizer. Analyze the folder structure and artist genres. Suggest file moves and folder renames. Return valid JSON with 'moves' and 'renames' arrays only, no explanation."
+        
+        user_prompt = """Analyze this music library structure and suggest organization improvements.
+
+Folder Structure:
+{folder_structure}
+
+Artist Genres:
+{artist_genres}
+
+Return JSON with "moves" and "renames" arrays. Each move has "from", "to", "reason". Each rename has "from", "to", "reason".""".format(
+            folder_structure=json.dumps(folder_structure, indent=2),
+            artist_genres=json.dumps(artist_genres, indent=2)
+        )
+        
+        try:
+            result = self._call_api(user_prompt, system_prompt)
+            # Ensure result has the expected structure
+            if not isinstance(result, dict):
+                logger.warning("Unexpected result type, returning empty results")
+                return {"moves": [], "renames": []}
+            return {
+                "moves": result.get("moves", []),
+                "renames": result.get("renames", [])
+            }
+        except Exception:
+            logger.warning("Failed to get organization suggestions, returning empty results")
+            return {"moves": [], "renames": []}
 
     def _get_fallback_response(self, prompt: str) -> Dict[str, Any]:
         """Generate fallback response when API fails."""

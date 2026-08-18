@@ -3,9 +3,7 @@ Tests FixerTab functionality with pytest-qt in headless offscreen mode.
 Run with: QT_QPA_PLATFORM=offscreen pytest tests/ui/test_fixer_tab.py -v
 """
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-from PyQt6.QtWidgets import QTableWidgetItem
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
@@ -249,8 +247,8 @@ def test_userrole_index_mapping_with_filter_active(fixer_tab, temp_dir):
         assert checkbox is not None
         checkbox.setCheckState(Qt.CheckState.Checked)
     
-    # Get checked rows - this should return data indices, not visual row indices
-    checked_data_indices = fixer_tab._get_checked_rows()
+    # Get checked rows - verifies the call doesn't crash
+    fixer_tab._get_checked_rows()
     
     # CRITICAL: Should return data indices {0, 2, 4}, not visual row indices {0, 1, 2}
     # The _get_checked_rows method returns visual row indices, but when used with

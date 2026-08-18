@@ -43,11 +43,19 @@ class LeaderboardCache:
         missing_title INTEGER DEFAULT 0,
         suggested_artist TEXT,
         suggested_title TEXT,
-        tag_data TEXT
+        tag_data TEXT,
+        fingerprint BLOB,
+        duration REAL
     );
     
     CREATE INDEX IF NOT EXISTS idx_artists_count ON artists(count DESC);
     CREATE INDEX IF NOT EXISTS idx_scan_cache_mtime ON scan_cache(mtime);
+    
+    CREATE TABLE IF NOT EXISTS artist_genres (
+        artist_name TEXT PRIMARY KEY,
+        genres_json TEXT NOT NULL,
+        last_updated INTEGER NOT NULL
+    );
     """
 
     def __init__(self, cache_path: Optional[Path] = None):
@@ -98,19 +106,54 @@ class LeaderboardCache:
         conn = self._get_connection()
         conn.executescript(self.DB_SCHEMA)
         
-        # Migrate old schemas: add tag_data column if missing (added in v2)
-        cols = {row['name'] for row in conn.execute("PRAGMA table_info(scan_cache)")}
-        if 'tag_data' not in cols:
-            conn.execute("ALTER TABLE scan_cache ADD COLUMN tag_data TEXT")
-            logger.info("Migrated scan_cache: added tag_data column")
-        
-        # Initialize schema version if missing
+        # Get current schema version
         cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
         row = cursor.fetchone()
-        if row is None:
-            conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+        current_version = row[0] if row else 0
+        
+        # Migration v2: add tag_data column
+        if current_version < 2:
+            cols = {row['name'] for row in conn.execute("PRAGMA table_info(scan_cache)")}
+            if 'tag_data' not in cols:
+                conn.execute("ALTER TABLE scan_cache ADD COLUMN tag_data TEXT")
+                logger.info("Migrated scan_cache: added tag_data column")
+            conn.execute("UPDATE schema_version SET version = 2")
             conn.commit()
-            logger.info("Created schema_version table, set to version 2")
+            logger.info("Updated schema version to 2")
+        
+        # Migration v3: add fingerprint and duration columns, create artist_genres table
+        if current_version < 3:
+            cols = {row['name'] for row in conn.execute("PRAGMA table_info(scan_cache)")}
+            if 'fingerprint' not in cols:
+                conn.execute("ALTER TABLE scan_cache ADD COLUMN fingerprint BLOB")
+                logger.info("Migrated scan_cache: added fingerprint column")
+            if 'duration' not in cols:
+                conn.execute("ALTER TABLE scan_cache ADD COLUMN duration REAL")
+                logger.info("Migrated scan_cache: added duration column")
+            
+            # Create artist_genres table if it doesn't exist
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='artist_genres'"
+            )
+            if cursor.fetchone() is None:
+                conn.execute(
+                    """CREATE TABLE artist_genres (
+                        artist_name TEXT PRIMARY KEY,
+                        genres_json TEXT NOT NULL,
+                        last_updated INTEGER NOT NULL
+                    )"""
+                )
+                logger.info("Created artist_genres table")
+            
+            conn.execute("UPDATE schema_version SET version = 3")
+            conn.commit()
+            logger.info("Updated schema version to 3")
+        
+        # Initialize schema version if missing (fresh DB)
+        if row is None:
+            conn.execute("INSERT INTO schema_version (version) VALUES (3)")
+            conn.commit()
+            logger.info("Created schema_version table, set to version 3")
 
     def update_artists(self, artist_counts: dict) -> None:
         """Update artist counts in database using bulk insert.
@@ -197,6 +240,89 @@ class LeaderboardCache:
                 'tag_data': tag_data
             }
         return None
+
+    def get_fingerprint(self, path: str) -> tuple[bytes | None, float | None]:
+        """Get fingerprint and duration for a file from scan_cache.
+        
+        Args:
+            path: File path string.
+            
+        Returns:
+            Tuple of (fingerprint, duration) if set, (None, None) otherwise.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT fingerprint, duration FROM scan_cache WHERE path = ?",
+            (path,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return (row['fingerprint'], row['duration'])
+        return (None, None)
+
+    def set_fingerprint(self, path: str, fingerprint: bytes, duration: float) -> None:
+        """Set fingerprint and duration for a file in scan_cache.
+        
+        Args:
+            path: File path string.
+            fingerprint: Fingerprint bytes.
+            duration: Duration in seconds.
+        """
+        conn = self._get_connection()
+        conn.execute(
+            """UPDATE scan_cache SET fingerprint = ?, duration = ? WHERE path = ?""",
+            (fingerprint, duration, path)
+        )
+        conn.commit()
+
+    def get_all_scanned_paths(self) -> list[str]:
+        """Get all file paths from scan_cache.
+        
+        Returns:
+            List of file path strings.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute("SELECT path FROM scan_cache")
+        return [row['path'] for row in cursor.fetchall()]
+
+    def get_artist_genres(self, artist_name: str) -> list[str] | None:
+        """Get cached genres for an artist.
+        
+        Args:
+            artist_name: Name of the artist.
+            
+        Returns:
+            List of genres if cached, None otherwise.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT genres_json FROM artist_genres WHERE artist_name = ?",
+            (artist_name,)
+        )
+        row = cursor.fetchone()
+        if row and row['genres_json']:
+            import json
+            try:
+                return json.loads(row['genres_json'])
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return None
+
+    def set_artist_genres(self, artist_name: str, genres: list[str]) -> None:
+        """Cache genres for an artist.
+        
+        Args:
+            artist_name: Name of the artist.
+            genres: List of genre strings.
+        """
+        conn = self._get_connection()
+        import json
+        conn.execute(
+            """INSERT OR REPLACE INTO artist_genres (artist_name, genres_json, last_updated)
+               VALUES (?, ?, ?)""",
+            (artist_name, json.dumps(genres), int(time.time()))
+        )
+        conn.commit()
 
     def update_scan_cache(self, files_info: list) -> None:
         """Update scan cache with file info.

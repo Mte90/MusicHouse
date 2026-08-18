@@ -2,7 +2,6 @@
 
 import fcntl
 import os
-import sys
 from pathlib import Path
 
 

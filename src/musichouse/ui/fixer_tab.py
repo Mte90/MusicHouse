@@ -1,9 +1,9 @@
 """Fixer tab for MP3 tag correction in MusicHouse."""
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QComboBox, QPushButton, QHeaderView, QLabel, QProgressBar, QMessageBox, QVBoxLayout, QTextEdit, QLineEdit, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer
@@ -11,13 +11,10 @@ from PyQt6.QtGui import QColor
 
 from musichouse.parser import parse_filename, get_artist_from_folder
 from musichouse.utils import load_mp3_safely
-from musichouse.ui.tag_fix_worker import TagFixWorker, TagUpdateWorker
+from musichouse.ui.tag_fix_worker import TagFixWorker
 from musichouse import config
 from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse import log_setup as logging
-from musichouse.error_handling import (
-    CorruptedFileError, FileLockedError, ReadOnlyFileError, TagWriteError
-)
 
 
 logger = logging.get_logger(__name__)
@@ -661,7 +658,7 @@ class FixerTab(QWidget):
         failure_count = len(failures)
         
         # Create summary message
-        summary_text = f"<b>Fix Complete</b><br/>"
+        summary_text = "<b>Fix Complete</b><br/>"
         summary_text += f"Fixed: {success_count} files<br/>"
         summary_text += f"Failed: {failure_count} files"
         
@@ -675,7 +672,7 @@ class FixerTab(QWidget):
             return
         
         # Create custom dialog for failures
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QTextEdit, QLabel
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel
         
         dialog = QDialog(self)
         dialog.setWindowTitle("Fix Complete - Some Files Failed")

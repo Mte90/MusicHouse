@@ -5,9 +5,8 @@ Run with: QT_QPA_PLATFORM=offscreen pytest tests/ui/test_main_window.py -v
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from PyQt6.QtWidgets import QMessageBox
-from typing import List, Tuple
 
 pytestmark = pytest.mark.ui
 
@@ -621,7 +620,6 @@ def test_scan_worker_handles_scan_errors(qapp, mock_scanner_class, mock_cache_cl
 
 def test_main_window_close_event_with_scan_in_progress(qapp, main_window):
     """Test closeEvent handles scan in progress correctly."""
-    from unittest.mock import Mock
     
     # Setup mock worker
     mock_worker = MagicMock()
@@ -689,3 +687,125 @@ def test_scan_worker_with_large_batch(qapp, mock_scanner_class, mock_cache_class
         final_update = progress_updates[-1]
         assert final_update[0] == 1000  # total progress
         assert final_update[1] == 1000  # total work
+
+
+# ============================================================================
+# Duplicates Tab Tests
+# ============================================================================
+
+def test_main_window_has_duplicates_tab(qapp):
+    """Test that MainWindow has a Duplicates tab after construction."""
+    from musichouse.ui.main_window import MainWindow
+    
+    window = MainWindow()
+    
+    # Verify the tab exists
+    assert hasattr(window, '_duplicates_tab')
+    assert window._duplicates_tab is not None
+    window.close()
+
+
+def test_main_window_duplicates_tab_label(qapp):
+    """Test that the Duplicates tab has the correct label."""
+    from musichouse.ui.main_window import MainWindow
+    
+    window = MainWindow()
+    
+    # Find the Duplicates tab by label
+    tab_count = window._tab_widget.count()
+    duplicates_tab_index = None
+    for i in range(tab_count):
+        if window._tab_widget.tabText(i) == "Duplicates":
+            duplicates_tab_index = i
+            break
+    
+    assert duplicates_tab_index is not None, "Duplicates tab not found"
+    assert window._tab_widget.tabText(duplicates_tab_index) == "Duplicates"
+    window.close()
+
+
+def test_main_window_duplicates_tab_has_cache(qapp):
+    """Test that the Duplicates tab has access to the cache."""
+    from musichouse.ui.main_window import MainWindow
+    
+    window = MainWindow()
+    
+    # Verify the tab has a _cache attribute
+    assert hasattr(window._duplicates_tab, '_cache')
+    assert window._duplicates_tab._cache is not None
+    window.close()
+
+
+def test_main_window_has_organize_tab(qapp):
+    """Test that MainWindow has an Organize tab after construction."""
+    from musichouse.ui.main_window import MainWindow
+    
+    window = MainWindow()
+    
+    # Verify the tab exists
+    assert hasattr(window, '_organize_tab')
+    assert window._organize_tab is not None
+    window.close()
+
+
+def test_main_window_organize_tab_label(qapp):
+    """Test that the Organize tab has the correct label."""
+    from musichouse.ui.main_window import MainWindow
+    
+    window = MainWindow()
+    
+    # Find the Organize tab by label
+    tab_count = window._tab_widget.count()
+    organize_tab_index = None
+    for i in range(tab_count):
+        if window._tab_widget.tabText(i) == "Organize":
+            organize_tab_index = i
+            break
+    
+    assert organize_tab_index is not None, "Organize tab not found"
+    assert window._tab_widget.tabText(organize_tab_index) == "Organize"
+    window.close()
+
+
+def test_main_window_has_fingerprint_mode_indicator(qapp):
+    """Test that the status bar has the fingerprint mode indicator label."""
+    from musichouse.ui.main_window import MainWindow
+    
+    window = MainWindow()
+    
+    # Verify the mode indicator label exists
+    assert hasattr(window, '_mode_indicator')
+    assert window._mode_indicator is not None
+    
+    # Verify the label contains "Duplicate mode"
+    mode_text = window._mode_indicator.text()
+    assert "Duplicate mode" in mode_text
+    window.close()
+
+
+def test_main_window_fingerprint_mode_indicator_shows_fingerprint_when_available(qapp, monkeypatch):
+    """Test that the mode indicator shows 'Fingerprint' when fpcalc is available."""
+    from musichouse.ui.main_window import MainWindow
+    
+    # Mock is_fpcalc_available in the fingerprint module (where it's defined)
+    with patch("musichouse.fingerprint.is_fpcalc_available", return_value=True):
+        window = MainWindow()
+        
+        mode_text = window._mode_indicator.text()
+        assert "Fingerprint" in mode_text
+        assert "fpcalc detected" in mode_text
+        window.close()
+
+
+def test_main_window_fingerprint_mode_indicator_shows_metadata_when_not_available(qapp, monkeypatch):
+    """Test that the mode indicator shows 'Metadata only' when fpcalc is not available."""
+    from musichouse.ui.main_window import MainWindow
+    
+    # Mock is_fpcalc_available in the fingerprint module (where it's defined)
+    with patch("musichouse.fingerprint.is_fpcalc_available", return_value=False):
+        window = MainWindow()
+        
+        mode_text = window._mode_indicator.text()
+        assert "Metadata only" in mode_text
+        assert "fpcalc not found" in mode_text
+        window.close()
