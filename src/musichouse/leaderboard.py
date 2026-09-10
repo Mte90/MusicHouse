@@ -1,11 +1,10 @@
 """Leaderboard module for MusicHouse."""
 
-from typing import Optional, List, Tuple
 from collections import Counter
 from pathlib import Path
 
-from musichouse import log_setup as logging
 from musichouse import leaderboard_cache
+from musichouse import log_setup as logging
 from musichouse.utils import load_mp3_safely
 
 logger = logging.get_logger(__name__)
@@ -14,7 +13,7 @@ logger = logging.get_logger(__name__)
 class Leaderboard:
     """Manages the artist leaderboard from scanned music files."""
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(self, cache_dir: Path | None = None):
         """Initialize the leaderboard."""
         if cache_dir is None:
             from musichouse import config
@@ -26,7 +25,7 @@ class Leaderboard:
         # Load existing artists from DB
         self._top_artists = self._cache.get_all_artists()
 
-    def update_from_files(self, files: List[Path]) -> List[Tuple[str, int]]:
+    def update_from_files(self, files: list[Path]) -> list[tuple[str, int]]:
         """Update leaderboard from a list of MP3 files.
         
         Uses cached tag data from scan_cache to avoid redundant eyed3.load() calls.
@@ -52,7 +51,7 @@ class Leaderboard:
                     audiofile = load_mp3_safely(file_path)
                     if audiofile and audiofile.tag:
                         artist = audiofile.tag.artist or ""
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.error(f"Error scanning {file_path}: {e}")
             
             if artist:
@@ -69,7 +68,7 @@ class Leaderboard:
     def update_from_artist_counts(
         self, 
         artist_counts: dict
-    ) -> List[Tuple[str, int]]:
+    ) -> list[tuple[str, int]]:
         """Update leaderboard from pre-computed artist counts dict."""
         # logger.info(f"Updating leaderboard with {len(artist_counts)} artists")  # Too verbose during scan
         
@@ -85,7 +84,7 @@ class Leaderboard:
         
         return self._top_artists
 
-    def get_top_artists(self, limit: int = 10) -> List[Tuple[str, int]]:
+    def get_top_artists(self, limit: int = 10) -> list[tuple[str, int]]:
         """Get the top N artists."""
         return self._top_artists[:limit]
 

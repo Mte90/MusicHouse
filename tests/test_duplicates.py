@@ -3,11 +3,13 @@
 import pytest
 
 from musichouse.duplicates import (
+    _normalize_metadata,
+    find_duplicates,
     find_duplicates_fingerprint,
     find_duplicates_metadata,
-    find_duplicates,
-    _normalize_metadata,
 )
+
+
 # ============================================================================
 # Fixtures
 # ============================================================================

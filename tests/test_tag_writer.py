@@ -4,10 +4,9 @@ Tests for write_tags() function and TagPreviewDialog class.
 Uses mocking to avoid modifying real MP3 files.
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from musichouse.tag_writer import write_tags, TagPreviewDialog
-
+from musichouse.tag_writer import TagPreviewDialog, write_tags
 
 # ============================================================================
 # write_tags() Tests

@@ -11,7 +11,6 @@ from unittest.mock import patch
 from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse.ui.tag_fix_worker import TagFixWorker, TagUpdateWorker
 
-
 # ============================================================================
 # TagFixWorker Tests
 # ============================================================================
@@ -488,6 +487,112 @@ class TestTagFixWorker:
             assert call_args[0][1] == "Current Artist"  # artist
             assert call_args[0][2] == "Current Title"   # title
 
+    def test_cache_match_skip_write_and_log_already_fixed(self, temp_dir, qapp, leaderboard_cache):
+        """Test that when cache matches, write_tags is NOT called and 'Already fixed (cached)' is logged. Covers line 85."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        files_data = [
+            {
+                "path": str(mp3_file),
+                "suggested_artist": "Target Artist",
+                "suggested_title": "Target Title",
+            }
+        ]
+
+        # Seed cache with matching tag_data
+        conn = leaderboard_cache._get_connection()
+        import time
+        tag_data = {"artist": "Target Artist", "title": "Target Title"}
+        conn.execute(
+            """INSERT OR REPLACE INTO scan_cache
+               (path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title, tag_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(mp3_file),
+                1024,
+                time.time(),
+                "Cached Artist",
+                "Cached Title",
+                time.time(),
+                0,
+                0,
+                0,
+                json.dumps(tag_data)
+            )
+        )
+        conn.commit()
+
+        finished_args = []
+
+        def on_finished(success_count, failure_count):
+            finished_args.append((success_count, failure_count))
+
+        with patch("musichouse.ui.tag_fix_worker.write_tags") as mock_write_tags, \
+             patch("musichouse.ui.tag_fix_worker.LeaderboardCache", return_value=leaderboard_cache):
+            worker = TagFixWorker(files_data)
+            worker.finished.connect(on_finished)
+            worker.run()
+
+            # Verify write_tags was NOT called
+            mock_write_tags.assert_not_called()
+
+        # Verify success count is 1 (cache match counts as success)
+        assert len(finished_args) == 1
+        assert finished_args[0] == (1, 0)
+
+    def test_cache_mismatch_write_and_log_fixed(self, temp_dir, qapp, leaderboard_cache):
+        """Test that when cache doesn't match, write_tags IS called and 'Fixed:' is logged. Covers lines 85, 100."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        files_data = [
+            {
+                "path": str(mp3_file),
+                "suggested_artist": "Target Artist",
+                "suggested_title": "Target Title",
+            }
+        ]
+
+        # Seed leaderboard_cache (the fixture) with NON-matching tag_data
+        conn = leaderboard_cache._get_connection()
+        import time
+        tag_data = {"artist": "Different Artist", "title": "Different Title"}
+        conn.execute(
+            """INSERT OR REPLACE INTO scan_cache
+               (path, size, mtime, artist, title, scan_time, needs_fixing, missing_artist, missing_title, tag_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(mp3_file),
+                1024,
+                time.time(),
+                "Cached Artist",
+                "Cached Title",
+                time.time(),
+                0,
+                0,
+                0,
+                json.dumps(tag_data)
+            )
+        )
+        conn.commit()
+
+        finished_args = []
+
+        def on_finished(success_count, failure_count):
+            finished_args.append((success_count, failure_count))
+
+        # Patch LeaderboardCache to return our seeded cache
+        with patch("musichouse.ui.tag_fix_worker.LeaderboardCache", return_value=leaderboard_cache), \
+             patch("musichouse.ui.tag_fix_worker.write_tags", return_value=True):
+            worker = TagFixWorker(files_data)
+            worker.finished.connect(on_finished)
+            worker.run()
+
+        # Verify success count is 1 (write_tags was called because cached tags differ)
+        assert len(finished_args) == 1
+        assert finished_args[0] == (1, 0)
+
     def test_auto_fix_uses_suggested_values(self, temp_dir, qapp):
         """Test that auto_fix=True uses suggested_artist and suggested_title."""
         mp3_file = temp_dir / "Test.mp3"
@@ -577,3 +682,24 @@ class TestTagUpdateWorker:
 
         # Verify finished signal was still emitted
         assert len(finished_args) == 1
+
+    def test_run_db_update_error_path(self, temp_db_file, qapp):
+        """Test that DB update error path (lines 172-173) is covered and logged."""
+        fixed_paths = [Path("/path/to/file1.mp3")]
+
+        finished_args = []
+
+        def on_finished():
+            finished_args.append(True)
+
+        # Mock LeaderboardCache to cause an error in _get_connection
+        with patch("musichouse.ui.tag_fix_worker.LeaderboardCache") as mock_cache_class:
+            mock_cache = mock_cache_class.return_value
+            mock_cache._get_connection.side_effect = Exception("DB connection failed")
+            
+            worker = TagUpdateWorker(fixed_paths)
+            worker.finished.connect(on_finished)
+            worker.run()
+
+            # Verify finished signal was still emitted despite error
+            assert len(finished_args) == 1

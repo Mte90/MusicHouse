@@ -4,13 +4,12 @@ Tests for OrganizeWorker QThread worker.
 Uses mocking to avoid real API calls and file system operations.
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from musichouse.ai_client import AIClient
 from musichouse.leaderboard_cache import LeaderboardCache
-from musichouse.organizer import FolderType, FolderInfo
+from musichouse.organizer import FolderInfo, FolderType
 from musichouse.ui.organize_worker import OrganizeWorker
-
 
 # ============================================================================
 # OrganizeWorker Tests
@@ -91,7 +90,7 @@ class TestOrganizeWorker:
         def on_finished(result):
             analysis_finished_args.append(result)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch("musichouse.ui.organize_worker.MusicBrainzClient") as mock_mb_client_class:
                 mock_mb_client = MagicMock()
                 mock_mb_client.get_artist_genres.side_effect = lambda artist: {
@@ -115,7 +114,7 @@ class TestOrganizeWorker:
         # Verify progress signals
         assert "Analyzing folder structure..." in progress_args
         assert "Analyzing with AI..." in progress_args
-        assert any("Fetching genre:" in msg for msg in progress_args)
+        assert any("Fetching genre 1/" in msg for msg in progress_args)
 
         # Verify analysis_finished emitted with correct structure
         assert len(analysis_finished_args) == 1
@@ -148,17 +147,21 @@ class TestOrganizeWorker:
 
         progress_args = []
         analysis_finished_args = []
+        progress_percent_args = []
 
         def on_progress(msg):
             progress_args.append(msg)
             # Stop during first genre fetch
-            if "Fetching genre:" in msg and len(progress_args) == 2:
+            if "Fetching genre" in msg and len(progress_args) == 2:
                 worker.stop()
+
+        def on_progress_percent(current, total):
+            progress_percent_args.append((current, total))
 
         def on_finished(result):
             analysis_finished_args.append(result)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch("musichouse.ui.organize_worker.MusicBrainzClient") as mock_mb_client_class:
                 mock_mb_client = MagicMock()
                 mock_mb_client.get_artist_genres.side_effect = lambda artist: ["genre"]
@@ -167,6 +170,7 @@ class TestOrganizeWorker:
                 worker = OrganizeWorker(cache, ai_client, base_path)
 
                 worker.progress.connect(on_progress)
+                worker.progress_percent.connect(on_progress_percent)
                 worker.analysis_finished.connect(on_finished)
 
                 worker.run()
@@ -196,17 +200,20 @@ class TestOrganizeWorker:
         ai_client = AIClient()
 
         from musichouse.musicbrainz_client import MusicBrainzError
-
         progress_args = []
         analysis_finished_args = []
+        progress_percent_args = []
 
         def on_progress(msg):
             progress_args.append(msg)
 
+        def on_progress_percent(current, total):
+            progress_percent_args.append((current, total))
+
         def on_finished(result):
             analysis_finished_args.append(result)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch("musichouse.ui.organize_worker.MusicBrainzClient") as mock_mb_client_class:
                 mock_mb_client = MagicMock()
 
@@ -225,8 +232,8 @@ class TestOrganizeWorker:
                     worker = OrganizeWorker(cache, ai_client, base_path)
 
                     worker.progress.connect(on_progress)
+                    worker.progress_percent.connect(on_progress_percent)
                     worker.analysis_finished.connect(on_finished)
-
                     worker.run()
 
         # Verify both artists were processed (one with error, one successful)
@@ -253,17 +260,20 @@ class TestOrganizeWorker:
 
         cache = LeaderboardCache(temp_dir / "test.db")
         ai_client = AIClient()
-
         progress_args = []
         error_args = []
+        progress_percent_args = []
 
         def on_progress(msg):
             progress_args.append(msg)
 
+        def on_progress_percent(current, total):
+            progress_percent_args.append((current, total))
+
         def on_error(msg):
             error_args.append(msg)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch("musichouse.ui.organize_worker.MusicBrainzClient") as mock_mb_client_class:
                 mock_mb_client = MagicMock()
                 mock_mb_client.get_artist_genres.return_value = ["heavy metal"]
@@ -273,8 +283,8 @@ class TestOrganizeWorker:
                     worker = OrganizeWorker(cache, ai_client, base_path)
 
                     worker.progress.connect(on_progress)
+                    worker.progress_percent.connect(on_progress_percent)
                     worker.error.connect(on_error)
-
                     worker.run()
 
         # Verify error signal was emitted
@@ -300,20 +310,23 @@ class TestOrganizeWorker:
 
         cache = LeaderboardCache(temp_dir / "test.db")
         ai_client = AIClient()
-
         progress_args = []
         analysis_finished_args = []
+        progress_percent_args = []
 
         def on_progress(msg):
             progress_args.append(msg)
             # Stop after genre fetching completes
-            if "Fetching genre:" in msg:
+            if "Fetching genre" in msg:
                 worker.stop()
+
+        def on_progress_percent(current, total):
+            progress_percent_args.append((current, total))
 
         def on_finished(result):
             analysis_finished_args.append(result)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch("musichouse.ui.organize_worker.MusicBrainzClient") as mock_mb_client_class:
                 mock_mb_client = MagicMock()
                 mock_mb_client.get_artist_genres.return_value = ["heavy metal"]
@@ -322,8 +335,8 @@ class TestOrganizeWorker:
                 worker = OrganizeWorker(cache, ai_client, base_path)
 
                 worker.progress.connect(on_progress)
+                worker.progress_percent.connect(on_progress_percent)
                 worker.analysis_finished.connect(on_finished)
-
                 worker.run()
 
         # Verify worker stopped before AI call (empty result)
@@ -394,17 +407,20 @@ class TestOrganizeWorker:
                 "tag_data": None,
             },
         ])
-
         progress_args = []
         analysis_finished_args = []
+        progress_percent_args = []
 
         def on_progress(msg):
             progress_args.append(msg)
 
+        def on_progress_percent(current, total):
+            progress_percent_args.append((current, total))
+
         def on_finished(result):
             analysis_finished_args.append(result)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch("musichouse.ui.organize_worker.MusicBrainzClient") as mock_mb_client_class:
                 mock_mb_client = MagicMock()
                 mock_mb_client.get_artist_genres.return_value = ["heavy metal"]
@@ -417,8 +433,8 @@ class TestOrganizeWorker:
                     worker = OrganizeWorker(cache, ai_client, base_path)
 
                     worker.progress.connect(on_progress)
+                    worker.progress_percent.connect(on_progress_percent)
                     worker.analysis_finished.connect(on_finished)
-
                     worker.run()
 
         # Verify result contains correct data
@@ -451,17 +467,20 @@ class TestOrganizeWorker:
 
         cache = LeaderboardCache(temp_dir / "test.db")
         ai_client = AIClient()
-
         progress_args = []
         analysis_finished_args = []
+        progress_percent_args = []
 
         def on_progress(msg):
             progress_args.append(msg)
 
+        def on_progress_percent(current, total):
+            progress_percent_args.append((current, total))
+
         def on_finished(result):
             analysis_finished_args.append(result)
 
-        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):
+        with patch("musichouse.ui.organize_worker.analyze_folder_structure", return_value=mock_folders):  # noqa: SIM117
             with patch.object(ai_client, "analyze_folder_organization", return_value={
                 "moves": [],
                 "renames": []
@@ -469,11 +488,10 @@ class TestOrganizeWorker:
                 worker = OrganizeWorker(cache, ai_client, base_path)
 
                 worker.progress.connect(on_progress)
+                worker.progress_percent.connect(on_progress_percent)
                 worker.analysis_finished.connect(on_finished)
-
                 worker.run()
 
-        # Verify analysis completed without genre fetching
         assert len(analysis_finished_args) == 1
         result = analysis_finished_args[0]
         assert "moves" in result

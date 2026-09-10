@@ -1,11 +1,11 @@
 """Scanner module for MusicHouse."""
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import List, Tuple, Callable, Optional
 
-from musichouse import log_setup as logging
 from musichouse import config
+from musichouse import log_setup as logging
 
 logger = logging.get_logger(__name__)
 
@@ -20,16 +20,16 @@ class MP3Scanner:
             base_path: The root directory to scan.
         """
         self.base_path = base_path
-        self._results: List[Path] = []
-        self._errors: List[Tuple[Path, str]] = []
-        self._current_directory: Optional[Path] = None
+        self._results: list[Path] = []
+        self._errors: list[tuple[Path, str]] = []
+        self._current_directory: Path | None = None
         self._file_count: int = 0
-        self._progress_callback: Optional[Callable[[str], None]] = None
-        self._file_callback: Optional[Callable[[int], None]] = None
+        self._progress_callback: Callable[[str], None] | None = None
+        self._file_callback: Callable[[int], None] | None = None
         self._file_callback_batch_size: int = 100
         self._stop_requested: bool = False  # Flag to stop scan
 
-    def scan(self) -> List[Path]:
+    def scan(self) -> list[Path]:
         """Scan the directory for MP3 files.
         
         Returns:
@@ -89,11 +89,11 @@ class MP3Scanner:
         
         return self._results.copy()
 
-    def get_results(self) -> List[Path]:
+    def get_results(self) -> list[Path]:
         """Get the scan results."""
         return self._results.copy()
 
-    def get_errors(self) -> List[Tuple[Path, str]]:
+    def get_errors(self) -> list[tuple[Path, str]]:
         """Get any errors encountered during scanning."""
         return self._errors.copy()
 

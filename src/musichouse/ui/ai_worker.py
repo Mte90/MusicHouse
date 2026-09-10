@@ -1,8 +1,9 @@
 """AI worker thread for off-GUI-thread API calls."""
 
 from PyQt6.QtCore import QThread, pyqtSignal
-from musichouse.ai_client import AIClient
+
 from musichouse import log_setup as logging
+from musichouse.ai_client import AIClient
 
 logger = logging.get_logger(__name__)
 
@@ -52,7 +53,7 @@ class AIWorker(QThread):
             result = f"{similar_str}\n\nGenres: {genres_str}"
             self.finished.emit(result)
             
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error in AI worker: {e}")
             self.error.emit(str(e))
     

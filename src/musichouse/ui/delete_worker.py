@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -44,7 +43,7 @@ class DeleteWorker(QThread):
         Tries send2trash first, falls back to os.remove.
         """
         # Try send2trash first
-        send2trash_func: Optional[callable]
+        send2trash_func: callable | None
         try:
             from send2trash import send2trash as send2trash_func
         except ImportError:
@@ -55,7 +54,7 @@ class DeleteWorker(QThread):
                 send2trash_func(path_str)
                 logger.info(f"Moved to trash: {path.name}")
                 return True, ""
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"send2trash failed for {path.name}: {e}")
                 # Fall through to os.remove
 
@@ -64,7 +63,7 @@ class DeleteWorker(QThread):
             os.remove(path)
             logger.info(f"Permanently deleted: {path.name}")
             return True, ""
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to delete {path.name}: {e}")
             return False, str(e)
 

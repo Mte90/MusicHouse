@@ -114,7 +114,7 @@ def analyze_folder_structure(base_path: Path, cache: "LeaderboardCache") -> list
             ))
         elif not has_subfolders and num_artists == 1:
             # Single artist folder
-            artist = list(artists_in_folder)[0]
+            artist = next(iter(artists_in_folder))
             folder_name_normalized = _normalize_name(dirpath.name)
             artist_normalized = _normalize_name(artist)
 

@@ -1,37 +1,48 @@
 """Fixer tab for MP3 tag correction in MusicHouse."""
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QComboBox, QPushButton, QHeaderView, QLabel, QProgressBar, QMessageBox, QVBoxLayout, QTextEdit, QLineEdit, QCheckBox
-)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from musichouse.parser import parse_filename, get_artist_from_folder
-from musichouse.utils import load_mp3_safely
-from musichouse.ui.tag_fix_worker import TagFixWorker
 from musichouse import config
-from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse import log_setup as logging
-
+from musichouse.leaderboard_cache import LeaderboardCache
+from musichouse.parser import get_artist_from_folder, parse_filename
+from musichouse.ui.tag_fix_worker import TagFixWorker
+from musichouse.utils import load_mp3_safely
 
 logger = logging.get_logger(__name__)
 
 class FixerTab(QWidget):
     """Tab for scanning and fixing MP3 tags."""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._files_data: List[Dict[str, Any]] = []  # All entries must have "path" as Path object
-        self._empty_label: Optional[QLabel] = None
-        self._select_all_cb: Optional[QCheckBox] = None  # Header checkbox
+        self._files_data: list[dict[str, Any]] = []  # All entries must have "path" as Path object
+        self._empty_label: QLabel | None = None
+        self._select_all_cb: QCheckBox | None = None  # Header checkbox
         self._setup_ui()
         self._load_saved_files()
         self._setup_select_all_header()
         # T43: Track failure details with error types
-        self._failure_details: List[Tuple[str, str, str]] = []  # (filename, error_type, error_message)
+        self._failure_details: list[tuple[str, str, str]] = []  # (filename, error_type, error_message)
         # Search debounce timer (150ms)
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
@@ -120,7 +131,7 @@ class FixerTab(QWidget):
         self._progress_bar.setVisible(False)
         layout.addWidget(self._progress_bar)
 
-    def load_from_scan(self, files: List[Path], artist_counts: Dict[str, int]):
+    def load_from_scan(self, files: list[Path], artist_counts: dict[str, int]):
         """Load files from a scan result.
         
         Loads from database instead of re-reading files to avoid blocking UI.
@@ -177,7 +188,7 @@ class FixerTab(QWidget):
             
             self._apply_filter()
             self._update_empty_state(len(self._files_data) > 0)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error loading scan results from DB: {e}")
             # Fallback: clear data
             self._files_data = []
@@ -223,7 +234,7 @@ class FixerTab(QWidget):
                 logger.info(f"Loaded {len(self._files_data)} files needing fix from DB")
             else:
                 self._update_empty_state(False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error loading saved files from DB: {e}")
 
     def _reset_database(self) -> None:
@@ -258,7 +269,7 @@ class FixerTab(QWidget):
         try:
             cache = LeaderboardCache(app_config.get_config_dir())
             cache.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not close cache before reset: {e}")
 
         for path in sidecars:
@@ -335,7 +346,7 @@ class FixerTab(QWidget):
         else:
             self._select_all_cb.setCheckState(Qt.CheckState.Unchecked)
     
-    def _load_file_entry(self, file_path: Path, artist_counts: Dict[str, int]) -> Optional[Dict]:
+    def _load_file_entry(self, file_path: Path, artist_counts: dict[str, int]) -> dict | None:
         """Load a single file entry."""
         audiofile = load_mp3_safely(file_path)
 
@@ -367,7 +378,7 @@ class FixerTab(QWidget):
             "missing_title": missing_title,
         }
 
-    def add_file_entry(self, entry: Dict[str, Any]) -> None:
+    def add_file_entry(self, entry: dict[str, Any]) -> None:
         """Add a single file entry to the table in real-time.
         
         Only adds the row if it passes the current filter (efficient - no table rebuild).
@@ -406,7 +417,7 @@ class FixerTab(QWidget):
         # Update empty state based on filtered results
         self._update_empty_state(self._table.rowCount() == 0)
 
-    def _should_show_entry(self, entry: Dict, filter_text: str) -> bool:
+    def _should_show_entry(self, entry: dict, filter_text: str) -> bool:
         """Check if entry should be shown based on filter.
         
         CRITICAL: Only show entries that actually need fixing.
@@ -426,7 +437,7 @@ class FixerTab(QWidget):
             return entry["missing_artist"] and entry["missing_title"]
         return True
 
-    def _add_row_to_table(self, entry: Dict, data_index: Optional[int] = None):
+    def _add_row_to_table(self, entry: dict, data_index: int | None = None):
         """Add a row to the table.
 
         Args:
@@ -485,7 +496,7 @@ class FixerTab(QWidget):
             if item:
                 item.setCheckState(state)
 
-    def get_selected_files(self) -> List[Path]:
+    def get_selected_files(self) -> list[Path]:
         """Get list of selected file paths (from checkboxes)."""
         selected = []
         for row in range(self._table.rowCount()):
@@ -499,7 +510,6 @@ class FixerTab(QWidget):
     def _on_item_changed(self, item: QTableWidgetItem):
         """Handle item changes (e.g., checkbox toggling)."""
         # Header click detection - column 0 header click toggles all checkboxes
-        pass
 
     def _on_cell_changed(self, row: int, column: int):
         """Handle cell editing."""
@@ -545,8 +555,8 @@ class FixerTab(QWidget):
         self._worker.finished.connect(self._on_fix_finished)
         
         # Store fixed paths for DB update
-        self._fixed_paths: List[Path] = []
-        self._failed_paths: List[Path] = []
+        self._fixed_paths: list[Path] = []
+        self._failed_paths: list[Path] = []
         # _failure_details is initialized in __init__ with error types
         
         # Update UI
@@ -592,8 +602,8 @@ class FixerTab(QWidget):
         self._worker.finished.connect(self._on_fix_finished)
         
         # Store fixed paths for DB update
-        self._fixed_paths: List[Path] = []
-        self._failed_paths: List[Path] = []
+        self._fixed_paths: list[Path] = []
+        self._failed_paths: list[Path] = []
         # _failure_details is initialized in __init__ with error types
         
         # Update UI
@@ -640,7 +650,7 @@ class FixerTab(QWidget):
                     self._failed_paths.append(path)
                     break
     
-    def _on_failures(self, failures: List[Tuple[str, str, str]]):
+    def _on_failures(self, failures: list[tuple[str, str, str]]):
         """Handle failures signal from worker - collect failure details with error types.
         
         Args:
@@ -648,7 +658,7 @@ class FixerTab(QWidget):
         """
         self._failure_details.extend(failures)
     
-    def _show_failure_summary(self, failures: List[Tuple[str, str, str]], success_count: int):
+    def _show_failure_summary(self, failures: list[tuple[str, str, str]], success_count: int):
         """Show a non-modal summary dialog with failure details grouped by error type.
         
         Args:
@@ -692,7 +702,7 @@ class FixerTab(QWidget):
         failure_text.setMinimumHeight(200)
         
         # Group by error type
-        error_groups: Dict[str, List[Tuple[str, str]]] = {}
+        error_groups: dict[str, list[tuple[str, str]]] = {}
         for filename, error_type, error_msg in failures:
             if error_type not in error_groups:
                 error_groups[error_type] = []
@@ -763,7 +773,7 @@ class FixerTab(QWidget):
         else:
             logger.info(f"Fix complete: {success_count} files fixed")
     
-    def _mark_failed_row(self, failed_path: Path, error_type: Optional[str] = None):
+    def _mark_failed_row(self, failed_path: Path, error_type: str | None = None):
         """Mark a failed row in the table with a color based on error type.
         
         Args:
@@ -808,7 +818,7 @@ class FixerTab(QWidget):
                             filename_item.setToolTip("File is read-only")
                         break
     
-    def _update_db_after_fix(self, fixed_paths: List[Path]) -> None:
+    def _update_db_after_fix(self, fixed_paths: list[Path]) -> None:
         """Update database to mark files as fixed."""
         try:
             cache = LeaderboardCache(config.get_config_dir())
@@ -824,7 +834,7 @@ class FixerTab(QWidget):
             conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             cache.close()
             logger.info(f"Updated DB for {len(fixed_paths)} fixed files")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error updating DB after fix: {e}")
     
     def closeEvent(self, a0):
@@ -833,7 +843,7 @@ class FixerTab(QWidget):
             self._worker.cancel()
             self._worker.wait()
         a0.accept()
-    def _remove_fixed_rows(self, fixed_paths: List[Path]) -> None:
+    def _remove_fixed_rows(self, fixed_paths: list[Path]) -> None:
         """Remove fixed rows from the table (in reverse order to preserve indices)."""
         # Find row indices that match the fixed paths
         rows_to_remove = []

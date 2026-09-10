@@ -1,12 +1,20 @@
 """Settings dialog for API configuration."""
 import re
-from typing import Optional
 
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import pyqtSignal
 
-from musichouse.config import get_endpoint, get_model, get_api_key, set_endpoint, set_model, set_api_key, get_exclude_dirs, set_exclude_dirs
 from musichouse.ai_client import AIClient
+from musichouse.config import (
+    get_api_key,
+    get_endpoint,
+    get_exclude_dirs,
+    get_model,
+    set_api_key,
+    set_endpoint,
+    set_exclude_dirs,
+    set_model,
+)
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -14,7 +22,7 @@ class SettingsDialog(QtWidgets.QDialog):
     
     settings_saved = pyqtSignal()
 
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         """Initialize the settings dialog."""
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -187,7 +195,7 @@ class SettingsDialog(QtWidgets.QDialog):
                     client = AIClient(endpoint=self.endpoint, model=self.model, api_key=self.api_key)
                     client.get_artist_genres("Test")
                     self.result.emit(True, "Connected ✓")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     self.result.emit(False, str(e))
         
         self._test_worker = TestWorker(endpoint, model, api_key)
@@ -223,7 +231,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self.settings_saved.emit()
             self.accept()
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(
                 self,
                 "Error",

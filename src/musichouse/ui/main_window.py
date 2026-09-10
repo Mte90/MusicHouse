@@ -2,28 +2,34 @@
 
 import json
 import threading
-from pathlib import Path
-from typing import Optional, List, Dict, Tuple
-import eyed3
-
 import time
+from pathlib import Path
+
+import eyed3
 from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QShortcut, QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QProgressBar,
-    QTabWidget, QPushButton, QFileDialog, QMessageBox,
-    QStyle
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStyle,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from musichouse import log_setup as logging
 from musichouse import config
-from musichouse.scanner import MP3Scanner
+from musichouse import log_setup as logging
 from musichouse.leaderboard import Leaderboard
-from musichouse.ui.fixer_tab import FixerTab
-from musichouse.ui.leaderboard_tab import LeaderboardTab
+from musichouse.scanner import MP3Scanner
 from musichouse.ui.ai_tab import AITab
 from musichouse.ui.duplicates_tab import DuplicatesTab
+from musichouse.ui.fixer_tab import FixerTab
+from musichouse.ui.leaderboard_tab import LeaderboardTab
 from musichouse.ui.organize_tab import OrganizeTab
 from musichouse.ui.settings_dialog import SettingsDialog
 
@@ -57,10 +63,10 @@ class ScanWorker(QThread):
         self._pause_event = threading.Event()
         self._pause_event.set()  # Start in resume state
         self._stop_requested = False
-        self._scanner: Optional[MP3Scanner] = None
-        self._leaderboard: Optional[Leaderboard] = None
-        self._artist_counts: Dict[str, int] = {}  # Track artist counts for real-time updates
-        self._files_found: List[Path] = []
+        self._scanner: MP3Scanner | None = None
+        self._leaderboard: Leaderboard | None = None
+        self._artist_counts: dict[str, int] = {}  # Track artist counts for real-time updates
+        self._files_found: list[Path] = []
         self._scan_start_time: float = 0  # For duration tracking
     def run(self) -> None:
         """Execute the scan in worker thread.
@@ -209,7 +215,7 @@ class ScanWorker(QThread):
                             conn = cache._get_connection()
                             self._flush_batch_to_cache(files_info_batch, conn)
                             files_info_batch = []  # Clear batch after flush
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         # Include failed files with None values
                         stat = file_path.stat() if file_path.exists() else None
                         from musichouse.parser import parse_filename
@@ -277,9 +283,9 @@ class ScanWorker(QThread):
                 logger.info("Cache update complete, emitting scan_finished signal")
                 self.scan_finished.emit(self._files_found, self._artist_counts)
                 logger.info(f"Scan complete: {len(self._files_found)} files, {total_duration:.2f}s total")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Scan error: {e}")
-            self.error.emit(f"Scan failed: {str(e)}")
+            self.error.emit(f"Scan failed: {e!s}")
         finally:
             total_duration = time.perf_counter() - self._scan_start_time
             self._scanner = None
@@ -351,16 +357,16 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self._scan_worker: Optional[ScanWorker] = None
-        self._leaderboard: Optional[Leaderboard] = None
-        self._artist_counts: Dict[str, int] = {}  # Track artist counts for real-time updates
+        self._scan_worker: ScanWorker | None = None
+        self._leaderboard: Leaderboard | None = None
+        self._artist_counts: dict[str, int] = {}  # Track artist counts for real-time updates
         self._artist_update_counter: int = 0  # Counter to throttle leaderboard updates
         self._file_update_counter: int = 0  # Counter to throttle FixerTab updates
         # Load last scan directory from config
         last_dir = config.get_last_directory()
-        self._last_scan_path: Optional[Path] = Path(last_dir) if last_dir else None
+        self._last_scan_path: Path | None = Path(last_dir) if last_dir else None
         self._is_scanning = False
-        self._scan_stats_summary: Optional[Tuple[int, int, int]] = None
+        self._scan_stats_summary: tuple[int, int, int] | None = None
         self._setup_ui()
         self._connect_signals()
         logger.info("MainWindow initialized")
@@ -545,7 +551,6 @@ class MainWindow(QMainWindow):
         """Connect signals from ScanWorker to slots."""
         # Note: Signals are connected when worker is created
         # This is done in _start_scan to ensure worker exists
-        pass
     
     def _start_scan(self) -> None:
         """Start scanning a directory."""
@@ -730,7 +735,7 @@ class MainWindow(QMainWindow):
         if cached_paths:
             # Use empty artist_counts for partial reload
             self._fixer_tab.load_from_scan(cached_paths, self._artist_counts)
-    def _on_scan_finished(self, files: List[Path], artist_counts: Dict[str, int]) -> None:
+    def _on_scan_finished(self, files: list[Path], artist_counts: dict[str, int]) -> None:
         """Handle scan completion."""
         logger.info(f"Scan finished signal received: {len(files)} files, {len(artist_counts)} artists")
         
@@ -779,7 +784,7 @@ class MainWindow(QMainWindow):
             conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             cache.close()
             logger.debug("WAL checkpoint completed after scan")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"WAL checkpoint failed: {e}")
         
         self._progress_bar.setVisible(False)
@@ -814,7 +819,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Scan Error", error_msg)
         self._progress_bar.setVisible(False)
     
-    def _on_db_update_request(self, files: List[Path]) -> None:
+    def _on_db_update_request(self, files: list[Path]) -> None:
         """Handle DB update request from worker.
         
         This runs in main thread, safe to update UI and DB.

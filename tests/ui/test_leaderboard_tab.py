@@ -2,10 +2,10 @@
 Tests LeaderboardTab functionality with pytest-qt in headless offscreen mode.
 Run with: QT_QPA_PLATFORM=offscreen pytest tests/ui/test_leaderboard_tab.py -v
 """
-import pytest
 from unittest.mock import patch
+
+import pytest
 from PyQt6.QtWidgets import QHeaderView
-from typing import List, Tuple
 
 pytestmark = pytest.mark.ui
 
@@ -100,7 +100,7 @@ def test_update_leaderboard_empty_list(leaderboard_tab):
 
 def test_update_leaderboard_single_artist(leaderboard_tab):
     """Test updating with a single artist."""
-    artists: List[Tuple[str, int]] = [("Solo Artist", 42)]
+    artists: list[tuple[str, int]] = [("Solo Artist", 42)]
     leaderboard_tab.update_leaderboard(artists)
     
     assert leaderboard_tab._table.rowCount() == 1
@@ -118,7 +118,7 @@ def test_update_leaderboard_single_artist(leaderboard_tab):
 
 def test_update_leaderboard_multiple_artists(leaderboard_tab):
     """Test updating with multiple artists."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("Artist One", 100),
         ("Artist Two", 50),
         ("Artist Three", 25),
@@ -142,7 +142,7 @@ def test_update_leaderboard_multiple_artists(leaderboard_tab):
 
 def test_update_leaderboard_with_many_artists(leaderboard_tab):
     """Test updating with 100+ artists (edge case)."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         (f"Artist {i}", 1000 - i) for i in range(150)
     ]
     leaderboard_tab.update_leaderboard(artists)
@@ -161,12 +161,12 @@ def test_update_leaderboard_with_many_artists(leaderboard_tab):
 def test_update_leaderboard_overwrites_previous_data(leaderboard_tab):
     """Test that updating clears previous data."""
     # First update
-    artists1: List[Tuple[str, int]] = [("First Artist", 100)]
+    artists1: list[tuple[str, int]] = [("First Artist", 100)]
     leaderboard_tab.update_leaderboard(artists1)
     assert leaderboard_tab._table.rowCount() == 1
     
     # Second update
-    artists2: List[Tuple[str, int]] = [
+    artists2: list[tuple[str, int]] = [
         ("Second Artist", 50),
         ("Third Artist", 25),
     ]
@@ -184,7 +184,7 @@ def test_update_leaderboard_overwrites_previous_data(leaderboard_tab):
 
 def test_table_columns_have_correct_structure(leaderboard_tab):
     """Test that table columns have correct item structure."""
-    artists: List[Tuple[str, int]] = [("Test Artist", 42)]
+    artists: list[tuple[str, int]] = [("Test Artist", 42)]
     leaderboard_tab.update_leaderboard(artists)
     
     # Check all items in row exist
@@ -195,7 +195,7 @@ def test_table_columns_have_correct_structure(leaderboard_tab):
 
 def test_table_items_are_string_type(leaderboard_tab):
     """Test that all table items are stored as strings."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("Artist Name", 12345),
     ]
     leaderboard_tab.update_leaderboard(artists)
@@ -211,7 +211,7 @@ def test_table_items_are_string_type(leaderboard_tab):
 
 def test_table_is_not_editable(leaderboard_tab):
     """Test that table cells are not editable."""
-    artists: List[Tuple[str, int]] = [("Test Artist", 42)]
+    artists: list[tuple[str, int]] = [("Test Artist", 42)]
     leaderboard_tab.update_leaderboard(artists)
     
     # Check edit triggers are set to NoEditTriggers
@@ -225,7 +225,7 @@ def test_table_is_not_editable(leaderboard_tab):
 
 def test_artist_names_with_special_characters(leaderboard_tab):
     """Test that artist names with special characters are displayed correctly."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("Artista con accento", 50),
         ("Artist with numbers 123", 30),
         ("Artist & Band", 20),
@@ -241,7 +241,7 @@ def test_artist_names_with_special_characters(leaderboard_tab):
 
 def test_count_values_as_strings(leaderboard_tab):
     """Test that count values are stored and displayed as strings."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("Artist One", 0),
         ("Artist Two", 1),
         ("Artist Three", 1000000),
@@ -255,7 +255,7 @@ def test_count_values_as_strings(leaderboard_tab):
 
 def test_unicode_artist_names(leaderboard_tab):
     """Test that Unicode artist names are displayed correctly."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("艺术家", 50),      # Chinese
         ("Καλλιτέχνης", 30),  # Greek
         ("Café Musicien", 20),  # French with accent
@@ -273,7 +273,7 @@ def test_unicode_artist_names(leaderboard_tab):
 
 def test_leaderboard_with_zero_count(leaderboard_tab):
     """Test leaderboard with artists having zero count."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("Zero Artist", 0),
         ("Another Zero", 0),
     ]
@@ -287,7 +287,7 @@ def test_leaderboard_with_zero_count(leaderboard_tab):
 def test_leaderboard_preserves_order(leaderboard_tab):
     """Test that leaderboard preserves the order of input (assumes already sorted)."""
     # Input is already sorted by count descending
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("Top", 1000),
         ("Middle", 500),
         ("Bottom", 100),
@@ -302,7 +302,7 @@ def test_leaderboard_preserves_order(leaderboard_tab):
 
 def test_leaderboard_with_empty_artist_name(leaderboard_tab):
     """Test leaderboard with empty artist names (edge case)."""
-    artists: List[Tuple[str, int]] = [
+    artists: list[tuple[str, int]] = [
         ("", 50),
         ("Valid Artist", 30),
     ]
@@ -340,7 +340,7 @@ def test_multiple_updates_with_different_sizes(leaderboard_tab):
 def test_leaderboard_tab_with_mock_data_from_conftest(leaderboard_tab, mock_mp3_files):
     """Test leaderboard with data structure similar to mock_mp3_files fixture."""
     # Simulate artist counts from mock files
-    artist_counts: List[Tuple[str, int]] = [
+    artist_counts: list[tuple[str, int]] = [
         ("Test Artist 1", 2),
         ("Test Artist 2", 2),
         ("Another Artist", 2),
@@ -358,8 +358,23 @@ def test_leaderboard_tab_with_mock_data_from_conftest(leaderboard_tab, mock_mp3_
 def test_leaderboard_tab_update_after_close(leaderboard_tab):
     """Test that updating leaderboard after show works correctly."""
     # Tab is already shown from fixture
-    artists: List[Tuple[str, int]] = [("Test", 100)]
+    artists: list[tuple[str, int]] = [("Test", 100)]
     leaderboard_tab.update_leaderboard(artists)
     
     assert leaderboard_tab._table.rowCount() == 1
     assert leaderboard_tab._table.item(0, 0).text() == "Test"
+
+
+def test_leaderboard_tab_load_saved_data_exception_path(leaderboard_tab, qapp):
+    """Test that exception in _load_saved_data (lines 71-74) is handled gracefully."""
+    # Create a new tab with mocked cache that raises an exception
+    from musichouse.ui.leaderboard_tab import LeaderboardTab
+    
+    with patch("musichouse.leaderboard_cache.LeaderboardCache") as mock_cache:
+        mock_cache.return_value.get_top_artists.side_effect = Exception("DB error")
+        tab = LeaderboardTab()
+    
+    # Tab should show empty state despite exception (line 74 calls _update_empty_state(True))
+    # After exception, empty_label should be visible since no data was loaded
+    assert tab._table.rowCount() == 0  # No data loaded
+    tab.close()

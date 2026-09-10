@@ -4,9 +4,13 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from musichouse.fingerprint import compute_fingerprint, FingerprintError, is_fpcalc_available
-from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse import log_setup as logging
+from musichouse.fingerprint import (
+    FingerprintError,
+    compute_fingerprint,
+    is_fpcalc_available,
+)
+from musichouse.leaderboard_cache import LeaderboardCache
 
 logger = logging.get_logger(__name__)
 
@@ -57,7 +61,7 @@ class FingerprintWorker(QThread):
             self.progress.emit(f"Fingerprinting: {path.name}")
             
             # Check if already has fingerprint
-            existing_fp, existing_duration = self._cache.get_fingerprint(path_str)
+            existing_fp, _existing_duration = self._cache.get_fingerprint(path_str)
             if existing_fp is not None:
                 logger.debug(f"Skipping {path.name}: already fingerprinted")
                 continue

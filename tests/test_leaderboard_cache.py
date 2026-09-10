@@ -473,7 +473,7 @@ def test_get_changed_files_recursive(cache, temp_dir):
     file3.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
     
     # Act - pass list of files instead of base path
-    changed, new_count, modified_count, skipped = cache.get_changed_files([file1, file2, file3])
+    changed, new_count, _, _ = cache.get_changed_files([file1, file2, file3])
     
     # Assert
     assert len(changed) == 3
@@ -530,7 +530,7 @@ def test_thread_local_connections(cache):
     
     # Assert - all connections should be different
     assert len(connections) == 3
-    assert len(set(id(c) for c in connections)) == 3
+    assert len({id(c) for c in connections}) == 3
 
 
 def test_thread_local_same_connection_in_thread(cache):

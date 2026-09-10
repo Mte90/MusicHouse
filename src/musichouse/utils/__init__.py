@@ -1,11 +1,11 @@
 """Utility modules for MusicHouse."""
 
-import sys
-import os
 import io
+import logging
+import os
+import sys
 from pathlib import Path
 from typing import Optional
-import logging
 
 import eyed3
 
@@ -18,7 +18,7 @@ class silence_stderr:
     """Context manager to temporarily silence stderr output."""
     
     def __init__(self):
-        self.devnull = open(os.devnull, 'w')
+        self.devnull = open(os.devnull, 'w')  # noqa: SIM115
     
     def __enter__(self):
         self.stderr_old = sys.stderr
@@ -68,11 +68,11 @@ def load_mp3_safely(file_path: Path) -> Optional["eyed3.AudioFile"]:
     except CorruptedFileError:
         # Re-raise corrupted file errors
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Error loading MP3 {file_path}: {e}")
         return None
 
 
-from musichouse.utils.lock import SingleInstanceLock  # noqa: E402
+from musichouse.utils.lock import SingleInstanceLock
 
-__all__ = ["silence_stderr", "load_mp3_safely", "SingleInstanceLock"]
+__all__ = ["SingleInstanceLock", "load_mp3_safely", "silence_stderr"]

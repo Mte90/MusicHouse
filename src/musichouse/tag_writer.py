@@ -2,20 +2,27 @@
 
 import shutil
 from pathlib import Path
-from typing import Dict, Optional
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QTableWidget, 
-    QTableWidgetItem, QPushButton, QHBoxLayout, QHeaderView
-)
 from PyQt6.QtGui import QColor
-
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 from musichouse import log_setup as logging
-from musichouse.utils import load_mp3_safely
 from musichouse.error_handling import (
-    CorruptedFileError, FileLockedError, ReadOnlyFileError, TagWriteError
+    CorruptedFileError,
+    FileLockedError,
+    ReadOnlyFileError,
+    TagWriteError,
 )
+from musichouse.utils import load_mp3_safely
 
 logger = logging.get_logger(__name__)
 
@@ -28,8 +35,8 @@ class TagPreviewDialog(QDialog):
         self.file_path = file_path
         self.setWindowTitle(f"Preview: {file_path.name}")
         self.setMinimumWidth(500)
-        self._old_tags: Dict[str, str] = {}
-        self._new_tags: Dict[str, str] = {}
+        self._old_tags: dict[str, str] = {}
+        self._new_tags: dict[str, str] = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -68,14 +75,14 @@ class TagPreviewDialog(QDialog):
         button_layout.addWidget(self._skip_button)
         layout.addLayout(button_layout)
 
-    def set_old_tags(self, artist: str, title: str, genre: Optional[str] = None):
+    def set_old_tags(self, artist: str, title: str, genre: str | None = None):
         self._old_tags = {
             "Artist": artist,
             "Title": title,
             "Genre": genre or ""
         }
 
-    def set_new_tags(self, artist: str, title: str, genre: Optional[str] = None):
+    def set_new_tags(self, artist: str, title: str, genre: str | None = None):
         self._new_tags = {
             "Artist": artist,
             "Title": title,
@@ -108,7 +115,7 @@ class TagPreviewDialog(QDialog):
     def get_approval(self) -> bool:
         return self.exec() == QDialog.DialogCode.Accepted
 
-    def get_new_tags(self) -> Dict[str, str]:
+    def get_new_tags(self) -> dict[str, str]:
         return self._new_tags.copy()
 
 
@@ -116,7 +123,7 @@ def write_tags(
     file_path: Path,
     artist: str,
     title: str,
-    genre: Optional[str] = None,
+    genre: str | None = None,
     force: bool = False,
 ) -> bool:
     """Write ID3 tags to an MP3 file with crash recovery support.
@@ -202,7 +209,7 @@ def write_tags(
             try:
                 shutil.copy2(backup_path, file_path)
                 logger.info(f"Restored {file_path} from backup")
-            except Exception as restore_error:
+            except Exception as restore_error:  # noqa: BLE001
                 logger.error(f"Failed to restore from backup: {restore_error}")
         raise TagWriteError(f"Failed to write tags to {file_path}: {e}") from e
     finally:
@@ -211,5 +218,5 @@ def write_tags(
             try:
                 backup_path.unlink()
                 logger.debug(f"Removed backup: {backup_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"Failed to remove backup {backup_path}: {e}")

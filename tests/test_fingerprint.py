@@ -282,3 +282,55 @@ def test_durations_match_default_tolerance():
     """Test durations_match uses default 2.0 second tolerance."""
     assert durations_match(180.0, 182.0) is True
     assert durations_match(180.0, 182.0001) is False
+
+# ============================================================================
+# Test: compute_fingerprint() - URL-safe base64 (fpcalc output format)
+# ============================================================================
+def test_compute_fingerprint_urlsafe_base64(monkeypatch):
+    """Test compute_fingerprint handles URL-safe base64 (- and _ chars) from fpcalc."""
+    import base64 as b64
+    raw = b'\xfb\xff\xfe\xbf\xfc\x00\x00\x00'
+    fp_urlsafe = b64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+    mock_result = subprocess.CompletedProcess(
+        args=["fpcalc", "-json", "/fake/path.mp3"],
+        returncode=0,
+        stdout=f'{{"duration": 182.45, "fingerprint": "{fp_urlsafe}"}}',
+        stderr="",
+    )
+    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
+
+    fp_bytes, duration = compute_fingerprint("/fake/path.mp3")
+
+    assert isinstance(fp_bytes, bytes)
+    assert len(fp_bytes) > 0
+    assert duration == 182.45
+
+
+def test_compute_fingerprint_urlsafe_base64_decodes_correctly(monkeypatch):
+    """Test URL-safe base64 fingerprint decodes to correct raw bytes."""
+    import base64 as b64
+    raw = b'\xfb\xff\xfe\xbf\xfc\x00\x00\x00'
+    fp_urlsafe = b64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+    mock_result = subprocess.CompletedProcess(
+        args=["fpcalc", "-json", "/fake/path.mp3"],
+        returncode=0,
+        stdout=f'{{"duration": 100.0, "fingerprint": "{fp_urlsafe}"}}',
+        stderr="",
+    )
+    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
+
+    fp_bytes, _ = compute_fingerprint("/fake/path.mp3")
+    assert fp_bytes == raw
+
+
+def test_compute_fingerprint_standard_base64_still_works(mock_fpcalc_success):
+    """Test that standard base64 fingerprints (with + and /) still decode correctly."""
+    fp_bytes, duration = compute_fingerprint("/fake/path.mp3")
+
+    assert isinstance(fp_bytes, bytes)
+    assert len(fp_bytes) > 0
+    assert duration == 182.45

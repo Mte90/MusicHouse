@@ -3,15 +3,11 @@
 import json
 import urllib.error
 import urllib.request
-from typing import Dict, Any, List, Optional
+from typing import Any
 
-from musichouse import log_setup as logging
 from musichouse import config
-from musichouse.error_handling import (
-    APITimeoutError,
-    APIParseError,
-    APIConnectionError
-)
+from musichouse import log_setup as logging
+from musichouse.error_handling import APIConnectionError, APIParseError, APITimeoutError
 
 logger = logging.get_logger(__name__)
 
@@ -21,20 +17,20 @@ class AIClient:
 
     def __init__(
         self, 
-        endpoint: Optional[str] = None, 
-        model: Optional[str] = None,
-        api_key: Optional[str] = None
+        endpoint: str | None = None, 
+        model: str | None = None,
+        api_key: str | None = None
     ):
         self.endpoint = endpoint or config.get_endpoint()
         self.model = model or config.get_model()
         self.api_key = api_key or config.get_api_key()
 
-    def infer_tags(self, filename: str) -> Dict[str, str]:
+    def infer_tags(self, filename: str) -> dict[str, str]:
         """Infer artist and title from filename using AI."""
         prompt = f'Analyze: "{filename}". Return JSON with artist and title.'
         return self._call_api(prompt)
 
-    def get_similar_artists(self, artist: str) -> List[str]:
+    def get_similar_artists(self, artist: str) -> list[str]:
         """Get similar artists."""
         prompt = f'Find 5-10 artists like "{artist}". Return JSON array.'
         result = self._call_api(prompt)
@@ -43,7 +39,7 @@ class AIClient:
             return result
         return result.get("artists", [])
 
-    def get_artist_genres(self, artist: str) -> List[str]:
+    def get_artist_genres(self, artist: str) -> list[str]:
         """Get artist genres."""
         prompt = f'What genres is "{artist}"? Return JSON array.'
         result = self._call_api(prompt)
@@ -52,7 +48,7 @@ class AIClient:
             return result
         return result.get("genres", [])
 
-    def _call_api(self, prompt: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
+    def _call_api(self, prompt: str, system_prompt: str | None = None) -> dict[str, Any]:
         """Call the API endpoint."""
         if not self.api_key:
             logger.warning("No API key configured")
@@ -125,7 +121,7 @@ class AIClient:
             # Re-raise parse errors as-is
             raise
             
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             # Catch-all for any other unexpected errors
             error_msg = f"AI service error: {e}"
             logger.error(error_msg)
@@ -133,7 +129,7 @@ class AIClient:
             
 
 
-    def _extract_result(self, response: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_result(self, response: dict[str, Any]) -> dict[str, Any]:
         """Extract JSON from LLM response robustly."""
         try:
             if "choices" not in response or not response["choices"]:
@@ -178,8 +174,8 @@ class AIClient:
             raise APIParseError(error_msg)
 
     def analyze_folder_organization(
-        self, folder_structure: Dict[str, List[Dict[str, str]]], artist_genres: Dict[str, List[str]]
-    ) -> Dict[str, List[Dict[str, str]]]:
+        self, folder_structure: dict[str, list[dict[str, str]]], artist_genres: dict[str, list[str]]
+    ) -> dict[str, list[dict[str, str]]]:
         """
         Ask the LLM to suggest file moves and folder renames based on folder structure
         and artist genre data from MusicBrainz.
@@ -207,18 +203,15 @@ class AIClient:
         """
         system_prompt = "You are a music library organizer. Analyze the folder structure and artist genres. Suggest file moves and folder renames. Return valid JSON with 'moves' and 'renames' arrays only, no explanation."
         
-        user_prompt = """Analyze this music library structure and suggest organization improvements.
+        user_prompt = f"""Analyze this music library structure and suggest organization improvements.
 
 Folder Structure:
-{folder_structure}
+{json.dumps(folder_structure, indent=2)}
 
 Artist Genres:
-{artist_genres}
+{json.dumps(artist_genres, indent=2)}
 
-Return JSON with "moves" and "renames" arrays. Each move has "from", "to", "reason". Each rename has "from", "to", "reason".""".format(
-            folder_structure=json.dumps(folder_structure, indent=2),
-            artist_genres=json.dumps(artist_genres, indent=2)
-        )
+Return JSON with "moves" and "renames" arrays. Each move has "from", "to", "reason". Each rename has "from", "to", "reason"."""
         
         try:
             result = self._call_api(user_prompt, system_prompt)
@@ -230,11 +223,11 @@ Return JSON with "moves" and "renames" arrays. Each move has "from", "to", "reas
                 "moves": result.get("moves", []),
                 "renames": result.get("renames", [])
             }
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning("Failed to get organization suggestions, returning empty results")
             return {"moves": [], "renames": []}
 
-    def _get_fallback_response(self, prompt: str) -> Dict[str, Any]:
+    def _get_fallback_response(self, prompt: str) -> dict[str, Any]:
         """Generate fallback response when API fails."""
         if "similar" in prompt.lower() or "artists like" in prompt.lower():
             return {"artists": ["Unknown Artist"]}

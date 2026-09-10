@@ -2,10 +2,9 @@
 
 import re
 from pathlib import Path
-from typing import Optional
 
 
-def parse_filename(filename: str, file_path: Optional[Path] = None) -> tuple[str, str]:
+def parse_filename(filename: str, file_path: Path | None = None) -> tuple[str, str]:
     """Parse MP3 filename to extract artist and title.
     
     Handles patterns:

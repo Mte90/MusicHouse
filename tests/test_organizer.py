@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from musichouse.organizer import FolderType, FolderInfo, analyze_folder_structure, _normalize_name
+from musichouse.organizer import (
+    FolderInfo,
+    FolderType,
+    _normalize_name,
+    analyze_folder_structure,
+)
 
 
 # ============================================================================

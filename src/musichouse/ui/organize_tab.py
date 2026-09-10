@@ -1,17 +1,26 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QHeaderView, QLabel, QProgressBar, QMessageBox, QFrame
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from musichouse import log_setup as logging
-from musichouse.ui.organize_worker import OrganizeWorker
-from musichouse.ui.apply_worker import ApplyWorker
-from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse.ai_client import AIClient
+from musichouse.leaderboard_cache import LeaderboardCache
+from musichouse.ui.apply_worker import ApplyWorker
+from musichouse.ui.organize_worker import OrganizeWorker
 
 logger = logging.get_logger(__name__)
 
@@ -25,9 +34,9 @@ class OrganizeTab(QWidget):
         self._ai_client = ai_client
         self._base_path = base_path
         
-        self._actions_data: List[Dict[str, Any]] = []
-        self._worker: Optional[OrganizeWorker] = None
-        self._apply_worker: Optional[ApplyWorker] = None
+        self._actions_data: list[dict[str, Any]] = []
+        self._worker: OrganizeWorker | None = None
+        self._apply_worker: ApplyWorker | None = None
         
         self._setup_ui()
 
@@ -123,6 +132,7 @@ class OrganizeTab(QWidget):
         
         self._worker = OrganizeWorker(self._cache, self._ai_client, self._base_path)
         self._worker.progress.connect(self._on_progress)
+        self._worker.progress_percent.connect(self._on_progress_percent)
         self._worker.analysis_finished.connect(self._on_analysis_finished)
         self._worker.error.connect(self._on_error)
         
@@ -133,6 +143,13 @@ class OrganizeTab(QWidget):
 
     def _on_progress(self, msg: str):
         self._status_label.setText(msg)
+
+    def _on_progress_percent(self, current: int, total: int):
+        if total > 0:
+            self._progress_bar.setRange(0, total)
+            self._progress_bar.setValue(current)
+        else:
+            self._progress_bar.setRange(0, 0)
 
     def _on_analysis_finished(self, result: dict):
         self._set_ui_busy(False)

@@ -5,17 +5,12 @@ All API calls are mocked using unittest.mock.patch.
 """
 
 import json
-import socket
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from musichouse.ai_client import AIClient
-from musichouse.error_handling import (
-    APITimeoutError,
-    APIParseError,
-    APIConnectionError
-)
+from musichouse.error_handling import APIConnectionError, APIParseError, APITimeoutError
 
 
 # ============================================================================
@@ -335,7 +330,7 @@ class TestTimeoutHandling:
     def test_socket_timeout(self, ai_client_with_key):
         """Test raises APITimeoutError on socket timeout."""
         with patch('musichouse.ai_client.urllib.request.urlopen') as mock_urlopen:
-            mock_urlopen.side_effect = socket.timeout("Socket timeout")
+            mock_urlopen.side_effect = TimeoutError("Socket timeout")
             
             with pytest.raises(APITimeoutError):
                 ai_client_with_key.get_similar_artists("Artist")

@@ -9,10 +9,9 @@ targeting ≥95% code coverage. Tests cover:
 """
 import io
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-
-from musichouse.utils import silence_stderr, load_mp3_safely
+from musichouse.utils import load_mp3_safely, silence_stderr
 
 
 class TestSilenceStderr:

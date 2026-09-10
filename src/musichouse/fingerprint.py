@@ -3,10 +3,9 @@
 import base64
 import json
 import shutil
-import subprocess
 import struct
+import subprocess
 from pathlib import Path
-from typing import Union
 
 FPCALC_AVAILABLE: bool | None = None
 
@@ -14,7 +13,6 @@ FPCALC_AVAILABLE: bool | None = None
 class FingerprintError(Exception):
     """Raised when fpcalc fails or output cannot be parsed."""
 
-    pass
 
 
 def is_fpcalc_available() -> bool:
@@ -25,7 +23,7 @@ def is_fpcalc_available() -> bool:
     return FPCALC_AVAILABLE
 
 
-def compute_fingerprint(path: Union[str, Path]) -> tuple[bytes, float]:
+def compute_fingerprint(path: str | Path) -> tuple[bytes, float]:
     """
     Run fpcalc on the audio file, return (raw_fingerprint_bytes, duration_seconds).
     
@@ -40,6 +38,7 @@ def compute_fingerprint(path: Union[str, Path]) -> tuple[bytes, float]:
         ["fpcalc", "-json", str(path)],
         capture_output=True,
         text=True,
+        check=False,
     )
 
     if result.returncode != 0:
@@ -51,7 +50,11 @@ def compute_fingerprint(path: Union[str, Path]) -> tuple[bytes, float]:
         output = json.loads(result.stdout)
         duration = float(output["duration"])
         fingerprint_b64 = output["fingerprint"]
-        fingerprint_bytes = base64.b64decode(fingerprint_b64)
+        # fpcalc outputs URL-safe base64 (- and _ instead of + and /) without padding
+        padding_needed = (4 - len(fingerprint_b64) % 4) % 4
+        if padding_needed:
+            fingerprint_b64 += "=" * padding_needed
+        fingerprint_bytes = base64.urlsafe_b64decode(fingerprint_b64)
     except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise FingerprintError(f"Failed to parse fpcalc output: {e}")
 
@@ -83,7 +86,7 @@ def hamming_distance(fp1: bytes, fp2: bytes) -> int:
     distance = 0
     for i in range(min_len):
         xor_result = vals1[i] ^ vals2[i]
-        distance += bin(xor_result).count("1")
+        distance += xor_result.bit_count()
 
     return distance
 

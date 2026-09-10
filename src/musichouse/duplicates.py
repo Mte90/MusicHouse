@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from musichouse.fingerprint import is_fpcalc_available, similarity_percent, durations_match
+from musichouse.fingerprint import (
+    durations_match,
+    is_fpcalc_available,
+    similarity_percent,
+)
 from musichouse.leaderboard_cache import LeaderboardCache
-
 
 SIMILARITY_THRESHOLD = 85.0  # percent
 DURATION_TOLERANCE = 2.0     # seconds

@@ -5,7 +5,7 @@ import os
 import platform
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import keyring
 from keyring.errors import PasswordDeleteError
@@ -15,11 +15,11 @@ SERVICE_NAME = "MusicHouse"
 API_KEY_USERNAME = "api_key"
 
 # Fallback storage for when keyring is unavailable
-_fallback_api_key: Optional[str] = None
+_fallback_api_key: str | None = None
 
 # Module-level config cache with mtime tracking
-_config_cache: Optional[Dict] = None
-_cache_mtime: Optional[float] = None
+_config_cache: dict | None = None
+_cache_mtime: float | None = None
 
 # Default configuration values
 DEFAULT_CONFIG = {
@@ -59,7 +59,7 @@ def get_config_path() -> Path:
     return get_config_dir() / "config.json"
 
 
-def _load_config() -> Dict:
+def _load_config() -> dict:
     """Load config with mtime check.
     
     Returns cached config if file hasn't changed since last load.
@@ -86,7 +86,7 @@ def _load_config() -> Dict:
             _config_cache = DEFAULT_CONFIG.copy()
             _config_cache.update(file_config)
             _cache_mtime = current_mtime
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             # Invalid JSON or IO error - return defaults
             _config_cache = DEFAULT_CONFIG.copy()
             _cache_mtime = current_mtime
@@ -94,7 +94,7 @@ def _load_config() -> Dict:
     return _config_cache
 
 
-def update_config(partial: Dict) -> None:
+def update_config(partial: dict) -> None:
     """Update config with multiple fields atomically.
     
     Args:
@@ -112,7 +112,7 @@ def update_config(partial: Dict) -> None:
     _save_config(config)
 
 
-def get_api_key_from_keyring() -> Optional[str]:
+def get_api_key_from_keyring() -> str | None:
     """Get API key from OS keyring.
     
     Returns:
@@ -124,7 +124,7 @@ def get_api_key_from_keyring() -> Optional[str]:
     
     try:
         return keyring.get_password(SERVICE_NAME, API_KEY_USERNAME)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Keyring might not be available (e.g., headless system)
         return None
 
@@ -139,7 +139,7 @@ def set_api_key_in_keyring(key: str) -> None:
     try:
         keyring.set_password(SERVICE_NAME, API_KEY_USERNAME, key)
         _fallback_api_key = key
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Fallback to in-memory storage if keyring is unavailable
         # This happens in headless environments or when keyring is locked
         _fallback_api_key = key
@@ -162,7 +162,7 @@ def _reset_keyring_fallback() -> None:
     _fallback_api_key = None
 
 
-def _migrate_api_key_from_config(config: Dict[str, Any]) -> Dict[str, Any]:
+def _migrate_api_key_from_config(config: dict[str, Any]) -> dict[str, Any]:
     """Migrate API key from config.json to keyring.
     
     If api_key exists in config and is non-empty, move it to keyring
@@ -184,7 +184,7 @@ def _migrate_api_key_from_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
-def load_config() -> Dict[str, Any]:
+def load_config() -> dict[str, Any]:
     """Load configuration from config.json and keyring.
     
     API key is retrieved from keyring. Other config values come from config.json.
@@ -209,7 +209,7 @@ def load_config() -> Dict[str, Any]:
 
             # Migrate API key from JSON to keyring if present
             config = _migrate_api_key_from_config(config)
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             config = DEFAULT_CONFIG.copy()
 
     # Get API key from keyring
@@ -222,7 +222,7 @@ def load_config() -> Dict[str, Any]:
     return config
 
 
-def _save_config(config: Dict) -> None:
+def _save_config(config: dict) -> None:
     """Internal save function used by update_config."""
     # Validate required fields
     required_fields = ["endpoint", "model", "api_key"]
@@ -262,7 +262,7 @@ def _save_config(config: Dict) -> None:
         raise
 
 
-def save_config(config: Dict[str, Any]) -> None:
+def save_config(config: dict[str, Any]) -> None:
     """Save configuration to config.json and keyring.
     
     API key is stored in keyring, not in config.json.

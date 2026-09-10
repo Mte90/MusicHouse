@@ -1,14 +1,13 @@
 """QThread worker for tag writes to prevent UI freezing."""
 
 from pathlib import Path
-from typing import List, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from musichouse.tag_writer import write_tags
-from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse import config
 from musichouse import log_setup as logging
+from musichouse.leaderboard_cache import LeaderboardCache
+from musichouse.tag_writer import write_tags
 
 logger = logging.get_logger(__name__)
 
@@ -25,7 +24,7 @@ class TagFixWorker(QThread):
     failures = pyqtSignal(list)  # list of (filename, error_type, error_message) tuples
     finished = pyqtSignal(int, int)  # (success count, failure count)
     
-    def __init__(self, files_data: List[dict], auto_fix: bool = False):
+    def __init__(self, files_data: list[dict], auto_fix: bool = False):
         """Initialize the worker.
         
         Args:
@@ -71,7 +70,7 @@ class TagFixWorker(QThread):
                 cached_info = cache.get_cached_info(str(file_path))
                 
                 # Initialize error to None (Fix M6)
-                error: Optional[Exception] = None
+                error: Exception | None = None
                 
                 # If cached tag data exists and already matches target, skip write
                 if cached_info and cached_info.get('tag_data'):
@@ -113,7 +112,7 @@ class TagFixWorker(QThread):
         
         except Exception as e:
             # Top-level exception handler (Fix C2)
-            logger.exception(f"Unexpected error in TagFixWorker: {e}")
+            logger.exception("Unexpected error in TagFixWorker")
             # Count remaining files as failures
             remaining = len(self._files_data) - success_count - failure_count
             failure_count += remaining
@@ -144,7 +143,7 @@ class TagUpdateWorker(QThread):
     
     finished = pyqtSignal()
     
-    def __init__(self, fixed_paths: List[Path]):
+    def __init__(self, fixed_paths: list[Path]):
         """Initialize the worker.
         
         Args:
@@ -170,7 +169,7 @@ class TagUpdateWorker(QThread):
             cache.close()
             logger.info(f"Updated DB for {len(self._fixed_paths)} fixed files")
             
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error updating DB after fix: {e}")
         
         self.finished.emit()

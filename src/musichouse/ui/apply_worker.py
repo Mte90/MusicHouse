@@ -56,7 +56,7 @@ class ApplyWorker(QThread):
             shutil.move(src, dst)
             logger.info(f"Moved: {Path(src).name} -> {Path(dst).name}")
             return True, ""
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to move {Path(src).name}: {e}")
             return False, str(e)
 
@@ -69,7 +69,7 @@ class ApplyWorker(QThread):
             Path(src).rename(dst)
             logger.info(f"Renamed: {Path(src).name} -> {Path(dst).name}")
             return True, ""
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to rename {Path(src).name}: {e}")
             return False, str(e)
 

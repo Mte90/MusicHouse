@@ -1,19 +1,27 @@
 """Tab for finding and managing duplicate MP3 files."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QHeaderView, QLabel, QProgressBar, QMessageBox
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
+from musichouse import log_setup as logging
 from musichouse.duplicates import find_duplicates
 from musichouse.fingerprint import is_fpcalc_available
 from musichouse.leaderboard_cache import LeaderboardCache
-from musichouse.ui.fingerprint_worker import FingerprintWorker
 from musichouse.ui.delete_worker import DeleteWorker
-from musichouse import log_setup as logging
+from musichouse.ui.fingerprint_worker import FingerprintWorker
 
 logger = logging.get_logger(__name__)
 
@@ -23,9 +31,9 @@ class DuplicatesTab(QWidget):
     def __init__(self, cache: LeaderboardCache, parent=None):
         super().__init__(parent)
         self._cache = cache
-        self._files_data: List[Dict[str, Any]] = []
-        self._worker: Optional[FingerprintWorker] = None
-        self._delete_worker: Optional[DeleteWorker] = None
+        self._files_data: list[dict[str, Any]] = []
+        self._worker: FingerprintWorker | None = None
+        self._delete_worker: DeleteWorker | None = None
         
         self._setup_ui()
 

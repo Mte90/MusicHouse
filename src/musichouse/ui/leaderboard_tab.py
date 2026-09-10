@@ -1,10 +1,13 @@
 """Leaderboard tab for MusicHouse - displays top artists."""
-from typing import List, Tuple, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
-    QHeaderView
+    QHeaderView,
+    QLabel,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from musichouse import log_setup as logging
@@ -18,7 +21,7 @@ class LeaderboardTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
-        self._empty_label: Optional[QLabel] = None
+        self._empty_label: QLabel | None = None
         self._setup_ui()
         self._load_saved_data()
 
@@ -65,12 +68,12 @@ class LeaderboardTab(QWidget):
                 self.update_leaderboard(top_artists)
             else:
                 self._update_empty_state(True)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error loading saved leaderboard: {e}")
             # No data loaded, will be populated when scan runs
             self._update_empty_state(True)
 
-    def update_leaderboard(self, artists: List[Tuple[str, int]]):
+    def update_leaderboard(self, artists: list[tuple[str, int]]):
         """Update the leaderboard with new data.
 
         Args:

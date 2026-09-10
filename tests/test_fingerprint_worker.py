@@ -9,7 +9,6 @@ from unittest.mock import patch
 from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse.ui.fingerprint_worker import FingerprintWorker
 
-
 # ============================================================================
 # FingerprintWorker Tests
 # ============================================================================
@@ -98,15 +97,15 @@ class TestFingerprintWorker:
         
         mock_fingerprint = (b"mock_fingerprint_data", 180.0)
         
-        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True):
-            with patch("musichouse.ui.fingerprint_worker.compute_fingerprint", return_value=mock_fingerprint):
-                worker = FingerprintWorker(cache)
-                
-                worker.file_done.connect(on_file_done)
-                worker.fingerprint_finished.connect(on_finished)
-                worker.progress.connect(on_progress)
-                
-                worker.run()
+        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True), \
+             patch("musichouse.ui.fingerprint_worker.compute_fingerprint", return_value=mock_fingerprint):
+            worker = FingerprintWorker(cache)
+            
+            worker.file_done.connect(on_file_done)
+            worker.fingerprint_finished.connect(on_finished)
+            worker.progress.connect(on_progress)
+            
+            worker.run()
         
         # Verify all files were fingerprinted
         assert len(file_done_args) == 3
@@ -166,15 +165,15 @@ class TestFingerprintWorker:
         
         from musichouse.fingerprint import FingerprintError
         
-        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True):
-            with patch("musichouse.ui.fingerprint_worker.compute_fingerprint", side_effect=FingerprintError("fpcalc failed")):
-                worker = FingerprintWorker(cache)
-                
-                worker.file_done.connect(on_file_done)
-                worker.fingerprint_finished.connect(on_finished)
-                worker.progress.connect(on_progress)
-                
-                worker.run()
+        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True), \
+             patch("musichouse.ui.fingerprint_worker.compute_fingerprint", side_effect=FingerprintError("fpcalc failed")):
+            worker = FingerprintWorker(cache)
+            
+            worker.file_done.connect(on_file_done)
+            worker.fingerprint_finished.connect(on_finished)
+            worker.progress.connect(on_progress)
+            
+            worker.run()
         
         # Verify no files were fingerprinted (all failed)
         assert len(file_done_args) == 0
@@ -230,14 +229,14 @@ class TestFingerprintWorker:
         
         mock_fingerprint = (b"mock_fingerprint_data", 180.0)
         
-        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True):
-            with patch("musichouse.ui.fingerprint_worker.compute_fingerprint", return_value=mock_fingerprint):
-                worker = FingerprintWorker(cache)
-                
-                worker.file_done.connect(on_file_done)
-                worker.fingerprint_finished.connect(on_finished)
-                
-                worker.run()
+        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True), \
+             patch("musichouse.ui.fingerprint_worker.compute_fingerprint", return_value=mock_fingerprint):
+            worker = FingerprintWorker(cache)
+            
+            worker.file_done.connect(on_file_done)
+            worker.fingerprint_finished.connect(on_finished)
+            
+            worker.run()
         
         # Verify worker stopped after 2 files
         assert len(file_done_args) == 2
@@ -326,5 +325,73 @@ class TestFingerprintWorker:
         paths = cache.get_all_scanned_paths()
         
         assert len(paths) == 0
+        
+        cache.close()
+
+    def test_run_skips_already_fingerprinted_cache_hit_path(self, temp_dir, qapp):
+        """Test that already-fingerprinted files are skipped (lines 66-67)."""
+        # Create mock MP3 files
+        mp3_files = []
+        for i in range(3):
+            mp3_file = temp_dir / f"Artist - Title {i}.mp3"
+            mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+            mp3_files.append(mp3_file)
+        
+        # Create cache and add files WITH existing fingerprints to scan_cache
+        cache = LeaderboardCache(temp_dir / "test.db")
+        # Must add files to scan_cache first so get_all_scanned_paths returns them
+        cache.update_scan_cache([
+            {
+                "path": str(mp3_file),
+                "size": mp3_file.stat().st_size,
+                "mtime": mp3_file.stat().st_mtime,
+                "artist": "Artist",
+                "title": f"Title {i}",
+                "needs_fixing": 0,
+                "missing_artist": 0,
+                "missing_title": 0,
+                "suggested_artist": None,
+                "suggested_title": None,
+                "tag_data": None,
+            }
+            for i, mp3_file in enumerate(mp3_files)
+        ])
+        # Now add fingerprints to all files
+        for mp3_file in mp3_files:
+            cache.set_fingerprint(str(mp3_file), b"existing_fp", 120.0)
+        
+        file_done_args = []
+        fingerprint_finished_args = []
+        progress_args = []
+        
+        def on_file_done(count):
+            file_done_args.append(count)
+        
+        def on_finished(total):
+            fingerprint_finished_args.append(total)
+        
+        def on_progress(msg):
+            progress_args.append(msg)
+        
+        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True), \
+             patch("musichouse.ui.fingerprint_worker.compute_fingerprint") as mock_compute:
+            worker = FingerprintWorker(cache)
+            
+            worker.file_done.connect(on_file_done)
+            worker.fingerprint_finished.connect(on_finished)
+            worker.progress.connect(on_progress)
+            
+            worker.run()
+        
+        # Verify compute_fingerprint was NEVER called (all files skipped)
+        mock_compute.assert_not_called()
+        
+        # Verify no files were fingerprinted
+        assert len(file_done_args) == 0
+        assert len(fingerprint_finished_args) == 1
+        assert fingerprint_finished_args[0] == 0
+        
+        # Verify progress was emitted for each file (but then skipped at line 67)
+        assert len(progress_args) == 3
         
         cache.close()

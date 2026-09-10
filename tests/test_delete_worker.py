@@ -5,9 +5,7 @@ Tests for DeleteWorker QThread worker.
 
 from unittest.mock import patch
 
-
 from musichouse.ui.delete_worker import DeleteWorker
-
 
 # ============================================================================
 # DeleteWorker Tests
@@ -266,3 +264,105 @@ class TestDeleteWorker:
         assert file_deleted_args[1][1] is False  # missing1
         assert file_deleted_args[2][1] is False  # missing2
         assert deletion_finished_args[0] == 1
+
+    def test_run_uses_send2trash_success_path(self, temp_dir, qapp):
+        """Test that DeleteWorker successfully uses send2trash when available (covers lines 53-58)."""
+        mp3_file = temp_dir / "track.mp3"
+        mp3_file.write_bytes(b"fake mp3 data")
+
+        paths = [str(mp3_file)]
+        file_deleted_args = []
+
+        def on_file_deleted(path, success, error):
+            file_deleted_args.append((path, success, error))
+
+        # Mock send2trash import to succeed - patch where it's imported FROM
+        import send2trash
+        with patch.object(send2trash, 'send2trash', return_value=None):
+            worker = DeleteWorker(paths)
+            worker.file_deleted.connect(on_file_deleted)
+            worker.run()
+
+            # Verify send2trash path succeeded
+            assert len(file_deleted_args) == 1
+            assert file_deleted_args[0][1] is True
+            assert file_deleted_args[0][2] == ""
+
+    def test_run_send2trash_falls_back_to_os_remove_on_error(self, temp_dir, qapp):
+        """Test that DeleteWorker falls back to os.remove when send2trash fails."""
+        mp3_file = temp_dir / "track.mp3"
+        mp3_file.write_bytes(b"fake mp3 data")
+
+        paths = [str(mp3_file)]
+        file_deleted_args = []
+
+        def on_file_deleted(path, success, error):
+            file_deleted_args.append((path, success, error))
+
+        # Mock send2trash import to fail, but os.remove succeeds
+        import send2trash
+        with patch.object(send2trash, 'send2trash', side_effect=Exception("send2trash failed")):
+            worker = DeleteWorker(paths)
+            worker.file_deleted.connect(on_file_deleted)
+            worker.run()
+
+            # Should fall back to os.remove and succeed
+            assert len(file_deleted_args) == 1
+            assert file_deleted_args[0][1] is True
+            assert file_deleted_args[0][2] == ""
+
+    def test_run_both_send2trash_and_os_remove_fail(self, temp_dir, qapp):
+        """Test DeleteWorker when both send2trash and os.remove fail (covers lines 66-68)."""
+        mp3_file = temp_dir / "protected.mp3"
+        mp3_file.write_bytes(b"fake mp3 data")
+
+        paths = [str(mp3_file)]
+        file_deleted_args = []
+
+        def on_file_deleted(path, success, error):
+            file_deleted_args.append((path, success, error))
+
+        # Mock both send2trash and os.remove to fail
+        import send2trash
+        with patch.object(send2trash, 'send2trash', side_effect=Exception("send2trash failed")), \
+             patch("os.remove", side_effect=Exception("permission denied")):
+            worker = DeleteWorker(paths)
+            worker.file_deleted.connect(on_file_deleted)
+            worker.run()
+
+            # Both failed, should report error
+        assert len(file_deleted_args) == 1
+        assert file_deleted_args[0][1] is False
+        assert "permission denied" in file_deleted_args[0][2]
+
+    def test_run_importerror_fallback_when_send2trash_not_installed(self, temp_dir, qapp):
+        """Test that ImportError path (lines 49-50) is covered when send2trash is not installed."""
+        mp3_file = temp_dir / "track.mp3"
+        mp3_file.write_bytes(b"fake mp3 data")
+
+        file_deleted_args = []
+        deletion_finished_args = []
+
+        def on_file_deleted(path, success, error):
+            file_deleted_args.append((path, success, error))
+
+        def on_finished(count):
+            deletion_finished_args.append(count)
+
+        # Patch send2trash import to fail
+        with patch.dict("sys.modules", {"send2trash": None}):
+            # Force reimport to trigger ImportError
+            import importlib
+
+            import musichouse.ui.delete_worker
+            importlib.reload(musichouse.ui.delete_worker)
+            
+            worker = musichouse.ui.delete_worker.DeleteWorker([str(mp3_file)])
+            worker.file_deleted.connect(on_file_deleted)
+            worker.deletion_finished.connect(on_finished)
+            worker.run()
+
+            # Should fall back to os.remove and succeed
+            assert len(file_deleted_args) == 1
+            assert file_deleted_args[0][1] is True
+            assert file_deleted_args[0][2] == ""

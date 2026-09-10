@@ -7,22 +7,18 @@ logger = logging.get_logger(__name__)
 
 class MusicHouseError(Exception):
     """Base exception for MusicHouse."""
-    pass
 
 
 class DatabaseError(MusicHouseError):
     """Database-related error."""
-    pass
 
 
 class ScanError(MusicHouseError):
     """Scanning-related error."""
-    pass
 
 
 class TagWriteError(MusicHouseError):
     """Tag writing error."""
-    pass
 
 
 class CorruptedFileError(MusicHouseError):
@@ -51,24 +47,19 @@ class ReadOnlyFileError(MusicHouseError):
 
 class APIError(MusicHouseError):
     """Base exception for AI API errors."""
-    pass
 
 
 class APIKeyError(APIError):
     """API key not configured or invalid."""
-    pass
 
 
 class APITimeoutError(APIError):
     """API request timed out."""
-    pass
 
 
 class APIParseError(APIError):
     """Failed to parse API response."""
-    pass
 
 
 class APIConnectionError(APIError):
     """Failed to connect to API server."""
-    pass

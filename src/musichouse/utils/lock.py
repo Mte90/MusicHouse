@@ -26,7 +26,7 @@ class SingleInstanceLock:
         
         try:
             # Open or create the lock file
-            self._lock_file = open(self._lock_path, "w")
+            self._lock_file = open(self._lock_path, "w")  # noqa: SIM115
             
             # Try to acquire exclusive lock (non-blocking)
             fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -36,7 +36,7 @@ class SingleInstanceLock:
             self._lock_file.flush()
             self._locked = True
             
-        except (OSError, IOError) as e:
+        except OSError as e:
             # Lock is already held by another process
             if self._lock_file:
                 self._lock_file.close()
@@ -52,7 +52,7 @@ class SingleInstanceLock:
             try:
                 fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
                 self._lock_file.close()
-            except (OSError, IOError):
+            except OSError:
                 pass  # Ignore errors on release
             finally:
                 self._lock_file = None
@@ -61,7 +61,7 @@ class SingleInstanceLock:
         # Remove the lock file
         try:
             self._lock_path.unlink(missing_ok=True)
-        except (OSError, IOError):
+        except OSError:
             pass  # Ignore errors on cleanup
     
     def __del__(self) -> None:

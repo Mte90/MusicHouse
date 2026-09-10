@@ -3,8 +3,8 @@
 import os
 import sqlite3
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import List, Generator
 
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -136,7 +136,7 @@ def temp_dir() -> Generator[Path, None, None]:
 # Mock MP3 Files Fixture
 # ============================================================================
 @pytest.fixture
-def mock_mp3_files(temp_dir) -> List[Path]:
+def mock_mp3_files(temp_dir) -> list[Path]:
     """Create mock MP3 files in temporary directory for testing.
     
     Creates mock MP3 files with standard test data patterns.

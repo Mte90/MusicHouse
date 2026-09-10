@@ -5,11 +5,10 @@ from pathlib import Path
 import pytest
 
 from musichouse.parser import (
+    get_artist_from_folder,
     parse_filename,
     validate_filename_pattern,
-    get_artist_from_folder,
 )
-
 
 # ============================================================================
 # Fixtures
@@ -87,7 +86,7 @@ class TestParseFilename:
 
     def test_flexible_spacing(self, sample_filenames):
         """Test flexible spacing around hyphen."""
-        filename, expected = sample_filenames[3]
+        filename, _expected = sample_filenames[3]
         result = parse_filename(filename)
         # Note: parser strips leading/trailing spaces from artist, but title may keep trailing spaces
         assert result[0] == "Artist"
@@ -265,7 +264,7 @@ class TestValidateFilenamePattern:
 
     def test_invalid_empty_title(self, sample_validation_cases):
         """Test invalid pattern (empty title)."""
-        filename, expected = sample_validation_cases[4]
+        filename, _expected = sample_validation_cases[4]
         result = validate_filename_pattern(filename)
         # Empty title after stripping should be invalid
         assert result[0] is False
@@ -573,6 +572,7 @@ class TestParseFilenameFallback:
     def test_reaches_unknown_with_mocked_root(self):
         """Test that function returns Unknown when all parents are whitespace."""
         from unittest.mock import MagicMock
+
         from musichouse.parser import get_artist_from_folder
         
         # Create mock file path where all parents have whitespace names

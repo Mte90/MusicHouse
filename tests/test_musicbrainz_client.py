@@ -6,15 +6,16 @@ All HTTP calls are mocked using unittest.mock.patch.
 
 import json
 import urllib.error
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 
+from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse.musicbrainz_client import (
     MusicBrainzClient,
     MusicBrainzError,
     MusicBrainzNotFoundError,
 )
-from musichouse.leaderboard_cache import LeaderboardCache
 
 
 # ============================================================================
@@ -144,7 +145,7 @@ class TestRateLimiting:
         musicbrainz_client._last_request_time = 0.0
         musicbrainz_client._enforce_rate_limit()
 
-        pass  # Just verify no exception is raised
+        # Just verify no exception is raised
 
 
 # ============================================================================
@@ -274,7 +275,7 @@ class TestNetworkErrors:
         with patch('musichouse.musicbrainz_client.urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.side_effect = TimeoutError("Request timed out")
 
-            with pytest.raises(MusicBrainzError, match="timed out"):
+            with pytest.raises(MusicBrainzError, match="timed out after 15s"):
                 musicbrainz_client._make_request("https://musicbrainz.org/ws/2/artist/test")
 
 

@@ -4,11 +4,11 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from musichouse import log_setup as logging
 from musichouse.ai_client import AIClient
 from musichouse.leaderboard_cache import LeaderboardCache
 from musichouse.musicbrainz_client import MusicBrainzClient, MusicBrainzError
 from musichouse.organizer import FolderType, analyze_folder_structure
-from musichouse import log_setup as logging
 
 logger = logging.get_logger(__name__)
 
@@ -27,6 +27,7 @@ class OrganizeWorker(QThread):
     progress = pyqtSignal(str)  # status message
     analysis_finished = pyqtSignal(dict)  # result dict with "moves", "renames", "folders"
     error = pyqtSignal(str)  # error message
+    progress_percent = pyqtSignal(int, int)  # current_index, total_count
 
     def __init__(self, cache: LeaderboardCache, ai_client: AIClient,
                  base_path: Path, parent=None):
@@ -62,15 +63,18 @@ class OrganizeWorker(QThread):
                     artists_to_fetch.update(folder_info.artists)
 
             # Step 3: Fetch genres for each artist
+            musicbrainz_client = MusicBrainzClient(self._cache)
             artist_genres: dict[str, list[str]] = {}
-            for artist in artists_to_fetch:
+            sorted_artists = sorted(artists_to_fetch)
+            total = len(sorted_artists)
+            for i, artist in enumerate(sorted_artists, 1):
                 if self._stop_flag:
                     logger.info("OrganizeWorker stopped by user during genre fetching")
                     self.analysis_finished.emit({})
                     return
 
-                self.progress.emit(f"Fetching genre: {artist}")
-                musicbrainz_client = MusicBrainzClient(self._cache)
+                self.progress.emit(f"Fetching genre {i}/{total}: {artist}")
+                self.progress_percent.emit(i, total)
 
                 try:
                     genres = musicbrainz_client.get_artist_genres(artist)
@@ -90,6 +94,7 @@ class OrganizeWorker(QThread):
 
             # Step 6: Get AI suggestions
             self.progress.emit("Analyzing with AI...")
+            self.progress_percent.emit(0, 0)  # Switch back to indeterminate for AI phase
             result = self._ai_client.analyze_folder_organization(folder_structure, artist_genres)
 
             # Step 7: Convert FolderInfo objects to dicts for signal emission
@@ -113,7 +118,7 @@ class OrganizeWorker(QThread):
             self.analysis_finished.emit(analysis_result)
             logger.info("OrganizeWorker completed successfully")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - top-level worker safety net
             logger.error(f"OrganizeWorker error: {e}")
             self.error.emit(str(e))
 

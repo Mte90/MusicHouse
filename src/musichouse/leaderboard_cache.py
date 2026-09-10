@@ -5,10 +5,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict
 
-from musichouse.utils import load_mp3_safely
 from musichouse import log_setup as logging
+from musichouse.utils import load_mp3_safely
 
 logger = logging.get_logger(__name__)
 
@@ -58,7 +57,7 @@ class LeaderboardCache:
     );
     """
 
-    def __init__(self, cache_path: Optional[Path] = None):
+    def __init__(self, cache_path: Path | None = None):
         """Initialize the leaderboard cache.
         
         Args:
@@ -173,7 +172,7 @@ class LeaderboardCache:
         )
         conn.commit()
 
-    def get_top_artists(self, limit: int = 10) -> List[Tuple[str, int]]:
+    def get_top_artists(self, limit: int = 10) -> list[tuple[str, int]]:
         """Get top N artists by count."""
         conn = self._get_connection()
         cursor = conn.execute(
@@ -182,7 +181,7 @@ class LeaderboardCache:
         )
         return [(row['name'], row['count']) for row in cursor.fetchall()]
 
-    def get_all_artists(self) -> List[Tuple[str, int]]:
+    def get_all_artists(self) -> list[tuple[str, int]]:
         """Get all artists sorted by count."""
         conn = self._get_connection()
         cursor = conn.execute(
@@ -197,7 +196,7 @@ class LeaderboardCache:
         conn.execute("DELETE FROM similar_artists")
         conn.execute("DELETE FROM scan_cache")
 
-    def get_cached_info(self, path: str) -> Optional[Dict]:
+    def get_cached_info(self, path: str) -> dict | None:
         """Get cached scan info for a file.
         
         Args:
@@ -367,7 +366,7 @@ class LeaderboardCache:
                  suggested_title if suggested_title is not None else None,
                  tag_data_json)
             )
-    def get_changed_files(self, files: List[Path]) -> Tuple[list, int, int, int]:
+    def get_changed_files(self, files: list[Path]) -> tuple[list, int, int, int]:
         """Filter files that have changed since last scan.
         
         Args:
@@ -400,8 +399,7 @@ class LeaderboardCache:
                     if entry.is_file():
                         try:
                             stat = entry.stat()
-                            if stat.st_mtime > tree_max_mtime:
-                                tree_max_mtime = stat.st_mtime
+                            tree_max_mtime = max(tree_max_mtime, stat.st_mtime)
                         except OSError:
                             pass
             except OSError:
@@ -465,7 +463,7 @@ class LeaderboardCache:
         logger.info(f"get_changed_files: {len(changed_files)} changed in {duration*1000:.1f}ms")
         return changed_files, new_count, modified_count, skipped_count
 
-    def _check_needs_fixing(self, file_path: Path, cached_info: Optional[Dict] = None) -> bool:
+    def _check_needs_fixing(self, file_path: Path, cached_info: dict | None = None) -> bool:
         """Check if a file needs fixing by verifying ID3 tag correctness.
         
         Args:
@@ -495,7 +493,7 @@ class LeaderboardCache:
             existing_title = getattr(audiofile.tag, 'title', None) or ''
             
             return not existing_artist or not existing_title
-        except Exception:
+        except Exception:  # noqa: BLE001
             # On any error reading the file, assume it needs fixing
             return True
 

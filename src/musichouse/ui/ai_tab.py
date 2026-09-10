@@ -1,12 +1,16 @@
 """AI Suggestions tab for MusicHouse."""
 
-from typing import List, Optional
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QPushButton,
-    QTextEdit, QComboBox, QLineEdit
-)
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from musichouse import log_setup as logging
 from musichouse.ai_client import AIClient
@@ -24,14 +28,14 @@ class AITab(QWidget):
         # Deferred: constructing AIClient() eagerly would call config.get_api_key(),
         # which hits the OS keyring and prompts the user at startup. Build it on
         # first use via _get_ai_client() instead.
-        self._ai_client: Optional[AIClient] = None
+        self._ai_client: AIClient | None = None
         self._artists_loaded = False
         self._all_artists = []  # Store all artists for filtering
-        self._worker: Optional[AIWorker] = None
+        self._worker: AIWorker | None = None
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._refresh_artist_combo)
-        self._empty_label: Optional[QLabel] = None
+        self._empty_label: QLabel | None = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -85,7 +89,7 @@ class AITab(QWidget):
         self._empty_label.setVisible(False)
         self._layout.addWidget(self._empty_label)
 
-    def load_artists(self, artists: List[str]):
+    def load_artists(self, artists: list[str]):
         """Populate the artist dropdown (sorted alphabetically)."""
         # Store all artists for filtering
         self._all_artists = sorted(artists)
@@ -172,7 +176,7 @@ class AITab(QWidget):
                 # No artists found - don't mark as loaded, allow retry
                 self._update_empty_state(True)
                 return False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error loading artists from DB: {e}")
             self._update_empty_state(True)
             return False

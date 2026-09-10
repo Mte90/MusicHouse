@@ -5,7 +5,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Optional
 
 from musichouse.error_handling import MusicHouseError
 from musichouse.leaderboard_cache import LeaderboardCache
@@ -13,12 +12,10 @@ from musichouse.leaderboard_cache import LeaderboardCache
 
 class MusicBrainzError(MusicHouseError):
     """Base exception for MusicBrainz API errors."""
-    pass
 
 
 class MusicBrainzNotFoundError(MusicBrainzError):
     """Artist not found on MusicBrainz."""
-    pass
 
 
 class MusicBrainzClient:
@@ -64,7 +61,7 @@ class MusicBrainzClient:
         self._cache.set_artist_genres(artist_name, genres)
         return genres
 
-    def _search_artist(self, name: str) -> Optional[str]:
+    def _search_artist(self, name: str) -> str | None:
         """Search MusicBrainz for an artist.
 
         Args:
@@ -127,7 +124,7 @@ class MusicBrainzClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=15) as response:
                 self._last_request_time = time.time()
                 data = response.read().decode("utf-8")
                 return json.loads(data)
@@ -143,7 +140,7 @@ class MusicBrainzClient:
                 time.sleep(retry_after + 0.5)
 
                 try:
-                    with urllib.request.urlopen(req, timeout=30) as retry_response:
+                    with urllib.request.urlopen(req, timeout=15) as retry_response:
                         self._last_request_time = time.time()
                         data = retry_response.read().decode("utf-8")
                         return json.loads(data)
@@ -156,7 +153,7 @@ class MusicBrainzClient:
             raise MusicBrainzError(f"Network error: {e.reason}")
 
         except TimeoutError:
-            raise MusicBrainzError("Request timed out after 30s")
+            raise MusicBrainzError("Request timed out after 15s")
 
         except json.JSONDecodeError as e:
             raise MusicBrainzError(f"Failed to parse JSON response: {e}")
