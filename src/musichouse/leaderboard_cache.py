@@ -75,6 +75,7 @@ class LeaderboardCache:
         
         self.cache_path = cache_path
         self._local = threading.local()  # Thread-local connections
+        self._conns: list[sqlite3.Connection] = []  # Track all connections for cleanup
         # Note: SQLite automatically manages WAL files (.db-shm, .db-wal)
         # No need to check for stale files - SQLite handles this automatically
         
@@ -90,6 +91,9 @@ class LeaderboardCache:
                 isolation_level=None,  # Autocommit mode
             )
             self._local.conn.row_factory = sqlite3.Row
+            
+            # Track connection for cleanup
+            self._conns.append(self._local.conn)
             
             # Performance optimizations
             self._local.conn.execute("PRAGMA journal_mode=WAL;")
@@ -498,7 +502,27 @@ class LeaderboardCache:
             return True
 
     def close(self) -> None:
-        """Close database connection."""
-        if hasattr(self._local, 'conn') and self._local.conn:
-            self._local.conn.close()
+        """Close all database connections. Idempotent - safe to call multiple times."""
+        # Close all tracked connections
+        for conn in self._conns:
+            try:
+                if conn is not None:
+                    conn.close()
+            except sqlite3.Error:
+                # Connection may already be closed
+                pass
+        
+        # Clear the current thread's connection
+        if hasattr(self._local, 'conn') and self._local.conn is not None:
             self._local.conn = None
+        
+        # Clear the registry
+        self._conns.clear()
+    
+    def __del__(self) -> None:
+        """Best-effort cleanup on garbage collection. Never raise from __del__."""
+        try:
+            self.close()
+        except BaseException:  # noqa: BLE001, S110 - intentional: never raise from __del__
+            # Never raise from __del__ - it can cause issues during interpreter shutdown
+            pass

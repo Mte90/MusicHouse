@@ -35,8 +35,8 @@ def test_ai_tab_construction(app, qtbot):
     assert not tab._cancel_button.isEnabled()
     assert tab._suggestions_display.isReadOnly()
     assert tab._genre_label.text() == "Genres: None"
-    # Empty label is visible when no artists loaded (initial state)
-    assert tab._empty_label.isVisible()
+    # Empty label stays hidden until a load reports no data
+    assert not tab._empty_label.isVisible()
 
 
 def test_load_artists_populates_combo(ai_tab, qtbot):

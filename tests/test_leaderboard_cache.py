@@ -531,6 +531,10 @@ def test_thread_local_connections(cache):
     # Assert - all connections should be different
     assert len(connections) == 3
     assert len({id(c) for c in connections}) == 3
+    
+    # Close all thread connections to avoid ResourceWarning
+    for conn in connections:
+        conn.close()
 
 
 def test_thread_local_same_connection_in_thread(cache):
@@ -826,3 +830,49 @@ def test_database_cleanup(temp_db_file):
     
     # Assert - files should be deleted
     assert not temp_db_file.exists()
+
+
+# ============================================================================
+# Test: Connection tracking and cleanup
+# ============================================================================
+def test_connection_tracking_closes_all_threads(temp_db_file):
+    """Test that close() properly closes all thread-local connections."""
+    import threading
+    
+    cache = LeaderboardCache(temp_db_file)
+    
+    # Get main thread connection
+    main_conn = cache._get_connection()
+    assert len(cache._conns) == 1
+    
+    # Get connection from another thread
+    worker_conn = [None]
+    
+    def get_worker_conn():
+        worker_conn[0] = cache._get_connection()
+    
+    thread = threading.Thread(target=get_worker_conn)
+    thread.start()
+    thread.join()
+    
+    # Assert - both connections should be tracked
+    assert len(cache._conns) == 2
+    assert main_conn is not worker_conn[0]
+    
+    # Close from main thread - should close ALL connections
+    cache.close()
+    
+    # Assert - all connections should be closed (registry empty)
+    assert len(cache._conns) == 0
+    
+    # Assert - re-calling close() is safe (idempotent)
+    cache.close()
+    
+    # Assert - using cache after close() recreates a working connection
+    new_conn = cache._get_connection()
+    assert new_conn is not None
+    cursor = new_conn.execute("SELECT 1")
+    assert cursor.fetchone()[0] == 1
+    
+    # Cleanup
+    cache.close()

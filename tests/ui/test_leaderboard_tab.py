@@ -378,3 +378,16 @@ def test_leaderboard_tab_load_saved_data_exception_path(leaderboard_tab, qapp):
     # After exception, empty_label should be visible since no data was loaded
     assert tab._table.rowCount() == 0  # No data loaded
     tab.close()
+
+
+def test_load_saved_data_feeds_cached_artists_to_update_leaderboard(qapp):
+    """Cached artists on startup must be routed to update_leaderboard."""
+    from musichouse.ui.leaderboard_tab import LeaderboardTab
+
+    artists = [("Radiohead", 42), ("Muse", 17)]
+    with patch("musichouse.leaderboard_cache.LeaderboardCache") as mock_cache, \
+         patch.object(LeaderboardTab, "update_leaderboard") as mock_update:
+        mock_cache.return_value.get_top_artists.return_value = artists
+        LeaderboardTab()
+
+    mock_update.assert_called_once_with(artists)

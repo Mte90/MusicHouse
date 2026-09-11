@@ -594,6 +594,41 @@ def test_fix_selected_no_checked_rows_early_return(fixer_tab, temp_dir):
         MockWorker.assert_not_called()
 
 
+def test_fix_selected_with_invalid_data_idx(fixer_tab, temp_dir):
+    """Test that fix_selected skips rows with invalid data_idx."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "",
+        "existing_title": "Title",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": False,
+    }
+    fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    # Set data_idx to None to trigger the continue statement
+    checkbox = fixer_tab._table.item(0, 0)
+    checkbox.setCheckState(Qt.CheckState.Checked)
+    checkbox.setData(Qt.ItemDataRole.UserRole, None)  # Invalid data_idx
+    
+    with patch("musichouse.ui.fixer_tab.TagFixWorker") as MockWorker:
+        mock_instance = MagicMock()
+        MockWorker.return_value = mock_instance
+        
+        # Should not crash - will create worker with empty list
+        fixer_tab.fix_selected()
+        
+        # Worker should be created but with empty files_to_fix list
+        # because the only checked row has invalid data_idx
+        assert MockWorker.called
+        call_args = MockWorker.call_args
+        assert call_args[0][0] == []  # files_to_fix is empty
+        assert call_args[1]["auto_fix"] is False  # auto_fix=False
+
+
 # ============================================================================
 # Checkbox and selection tests
 # ============================================================================
@@ -731,6 +766,60 @@ def test_filter_both_shows_only_both_missing(fixer_tab, temp_dir):
     # Should show only file2 (both missing)
     assert fixer_tab._table.rowCount() == 1
     assert fixer_tab._table.item(0, 1).text() == "file2.mp3"
+
+
+def test_should_show_entry_both_missing(fixer_tab, temp_dir):
+    """Test _should_show_entry with 'Both' filter and both missing."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "",
+        "existing_title": "",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": True,
+    }
+    
+    # Both missing should match "Both" filter
+    result = fixer_tab._should_show_entry(entry, "Both")
+    assert result is True
+
+
+def test_should_show_entry_both_not_missing(fixer_tab, temp_dir):
+    """Test _should_show_entry with 'Both' filter when not both missing."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "Artist",
+        "existing_title": "",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": False,
+        "missing_title": True,
+    }
+    
+    # Only title missing should NOT match "Both" filter
+    result = fixer_tab._should_show_entry(entry, "Both")
+    assert result is False
+
+
+def test_should_show_entry_unknown_filter(fixer_tab, temp_dir):
+    """Test _should_show_entry with unknown filter text returns True."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "",
+        "existing_title": "",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": True,
+    }
+    
+    # Unknown filter text should return True (default case)
+    result = fixer_tab._should_show_entry(entry, "Unknown Filter")
+    assert result is True
 
 
 def test_search_filter_by_filename(fixer_tab, temp_dir):
@@ -1217,7 +1306,7 @@ def test_on_failures(fixer_tab):
 
 def test_show_failure_summary_no_failures(fixer_tab):
     """Test _show_failure_summary with no failures shows simple message."""
-    with patch('PyQt6.QtWidgets.QMessageBox') as MockMsgBox:
+    with patch('musichouse.ui.fixer_tab.QMessageBox') as MockMsgBox:
         fixer_tab._show_failure_summary([], 5)
         
         MockMsgBox.assert_called_once()
@@ -1228,8 +1317,9 @@ def test_show_failure_summary_no_failures(fixer_tab):
 
 def test_show_failure_summary_with_failures(qapp, temp_dir):
     """Test _show_failure_summary with failures shows grouped dialog."""
-    from musichouse.ui.fixer_tab import FixerTab
     from PyQt6.QtWidgets import QDialog
+
+    from musichouse.ui.fixer_tab import FixerTab
     
     tab = FixerTab()
     
@@ -1338,7 +1428,10 @@ def test_on_fix_finished_with_failures_logs_warning(fixer_tab, temp_dir):
     mock_worker._auto_fix = False
     fixer_tab._worker = mock_worker
     
-    with patch.object(fixer_tab, '_mark_failed_row'):
+    from PyQt6.QtWidgets import QDialog
+
+    with patch.object(fixer_tab, '_mark_failed_row'), \
+         patch.object(QDialog, 'exec'):
         fixer_tab._on_fix_finished(0, 1)
     
     assert fixer_tab._progress_bar.isVisible() is False
@@ -1346,11 +1439,10 @@ def test_on_fix_finished_with_failures_logs_warning(fixer_tab, temp_dir):
 
 def test_update_db_after_fix_success(fixer_tab, temp_dir):
     """Test _update_db_after_fix updates database correctly."""
-    from pathlib import Path
     
     fixed_paths = [temp_dir / "file1.mp3", temp_dir / "file2.mp3"]
     
-    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+    with patch('musichouse.ui.fixer_tab.LeaderboardCache') as MockCache:
         mock_cache = MagicMock()
         mock_conn = MagicMock()
         mock_cache._get_connection.return_value = mock_conn
@@ -1366,12 +1458,626 @@ def test_update_db_after_fix_error(fixer_tab):
     """Test _update_db_after_fix handles errors gracefully."""
     from pathlib import Path
     
-    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+    with patch('musichouse.ui.fixer_tab.LeaderboardCache') as MockCache:
         MockCache.side_effect = Exception("DB error")
         
         fixer_tab._update_db_after_fix([Path("file1.mp3")])
         
         MockCache.assert_called_once()
+
+
+# ============================================================================
+# _load_saved_files tests
+# ============================================================================
+
+def test_load_saved_files_populates_from_db(qapp):
+    """Test _load_saved_files loads files from database on startup."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    # Create FixerTab with mocked database
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        mock_cache_instance = MagicMock()
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [
+            {"path": "/test/file1.mp3", "artist": "Artist1", "title": "",
+             "missing_artist": 0, "missing_title": 1,
+             "suggested_artist": "Suggested Artist", "suggested_title": "Suggested Title"}
+        ]
+        mock_conn.execute.return_value = mock_cursor
+        mock_cache_instance._get_connection.return_value = mock_conn
+        mock_cache_instance.close = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        
+        # Should have loaded the file
+        assert len(tab._files_data) == 1
+        assert tab._files_data[0]["filename"] == "file1.mp3"
+        
+        tab.deleteLater()
+
+
+def test_load_saved_files_empty_result(qapp):
+    """Test _load_saved_files with no files in database."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        mock_cache_instance = MagicMock()
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = []  # Empty result
+        mock_conn.execute.return_value = mock_cursor
+        mock_cache_instance._get_connection.return_value = mock_conn
+        mock_cache_instance.close = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        tab.show()  # Need to show for visibility to work properly
+        
+        assert len(tab._files_data) == 0
+        # Empty state should be visible when no data
+        tab._update_empty_state(len(tab._files_data) > 0)
+        assert tab._empty_label.isVisible() is True
+        
+        tab.deleteLater()
+
+
+def test_load_saved_files_db_error(qapp):
+    """Test _load_saved_files handles database errors gracefully."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        MockCache.side_effect = Exception("DB connection failed")
+        
+        tab = FixerTab()
+        
+        # Should not crash, just log error
+        assert len(tab._files_data) == 0
+        
+        tab.deleteLater()
+
+
+# ============================================================================
+# _reset_database tests
+# ============================================================================
+
+def test_reset_database_user_confirms(qapp, temp_dir):
+    """Test _reset_database when user confirms deletion."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    # Create mock DB files
+    db_path = temp_dir / "leaderboard.db"
+    db_path.write_text("fake db")
+    (temp_dir / "leaderboard.db-wal").write_text("fake wal")
+    (temp_dir / "leaderboard.db-shm").write_text("fake shm")
+    
+    with patch('musichouse.config.get_config_dir', return_value=temp_dir), \
+         patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes), \
+         patch.object(QMessageBox, 'information'), \
+         patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        
+        mock_cache_instance = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        tab._reset_database()
+        
+        # Files should be deleted
+        assert db_path.exists() is False
+        assert (temp_dir / "leaderboard.db-wal").exists() is False
+        assert (temp_dir / "leaderboard.db-shm").exists() is False
+        
+        # Table should be cleared
+        assert len(tab._files_data) == 0
+        assert tab._table.rowCount() == 0
+        
+        tab.deleteLater()
+
+
+def test_reset_database_user_cancels(qapp, temp_dir):
+    """Test _reset_database when user cancels."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    db_path = temp_dir / "leaderboard.db"
+    db_path.write_text("fake db")
+    
+    with patch('musichouse.config.get_config_dir', return_value=temp_dir), \
+         patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.No), \
+         patch.object(QMessageBox, 'information'):
+        
+        tab = FixerTab()
+        tab._reset_database()
+        
+        # Files should NOT be deleted
+        assert db_path.exists() is True
+        
+        tab.deleteLater()
+
+
+def test_reset_database_cache_close_error(qapp, temp_dir):
+    """Test _reset_database handles cache close error."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    db_path = temp_dir / "leaderboard.db"
+    db_path.write_text("fake db")
+    
+    with patch('musichouse.config.get_config_dir', return_value=temp_dir), \
+         patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes), \
+         patch.object(QMessageBox, 'information'), \
+         patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        
+        mock_cache_instance = MagicMock()
+        mock_cache_instance.close.side_effect = Exception("Close failed")
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        tab._reset_database()  # Should not crash
+        
+        tab.deleteLater()
+
+
+def test_reset_database_file_unlink_error(qapp, temp_dir):
+    """Test _reset_database handles file deletion error."""
+    from pathlib import Path
+    from unittest.mock import patch
+    from unittest.mock import patch as mock_patch
+
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    db_path = temp_dir / "leaderboard.db"
+    db_path.write_text("fake db")
+    wal_path = temp_dir / "leaderboard.db-wal"
+    wal_path.write_text("fake wal")
+    shm_path = temp_dir / "leaderboard.db-shm"
+    shm_path.write_text("fake shm")
+    
+    # Track which path should raise error
+    error_path = wal_path
+    original_unlink = Path.unlink
+    
+    def mock_unlink_raise(self, *args, **kwargs):
+        if self == error_path:
+            raise OSError("Cannot delete")
+        # Call original for other files
+        return original_unlink(self, *args, **kwargs)
+    
+    with patch('musichouse.config.get_config_dir', return_value=temp_dir), \
+         patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes), \
+         patch.object(QMessageBox, 'information'), \
+         patch('musichouse.leaderboard_cache.LeaderboardCache'), \
+         mock_patch.object(Path, 'unlink', mock_unlink_raise):
+        
+        tab = FixerTab()
+        tab._reset_database()  # Should not crash, just log error
+        
+        tab.deleteLater()
+
+
+# ============================================================================
+# _load_file_entry tests
+# ============================================================================
+
+def test_load_file_entry_success(temp_dir):
+    """Test _load_file_entry successfully loads file metadata."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    # Create a mock MP3 file
+    mp3_file = temp_dir / "test.mp3"
+    mp3_file.write_bytes(
+        b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100
+    )
+    
+    with patch('musichouse.ui.fixer_tab.load_mp3_safely') as mock_load, \
+         patch('musichouse.ui.fixer_tab.parse_filename', return_value=("Suggested Artist", "Suggested Title")):
+        
+        mock_audio = MagicMock()
+        mock_audio.tag.artist = "Test Artist"
+        mock_audio.tag.title = "Test Title"
+        mock_load.return_value = mock_audio
+        
+        tab = FixerTab()
+        result = tab._load_file_entry(mp3_file, {})
+        
+        assert result is not None
+        assert result["existing_artist"] == "Test Artist"
+        assert result["existing_title"] == "Test Title"
+        assert result["suggested_artist"] == "Suggested Artist"
+        
+        tab.deleteLater()
+
+
+def test_load_file_entry_suggested_artist_is_digit(temp_dir):
+    """Test _load_file_entry uses folder name when suggested artist is a digit."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    mp3_file = temp_dir / "123 - Song.mp3"
+    mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    with patch('musichouse.ui.fixer_tab.load_mp3_safely') as mock_load, \
+         patch('musichouse.ui.fixer_tab.parse_filename', return_value=("123", "Song")), \
+         patch('musichouse.ui.fixer_tab.get_artist_from_folder', return_value="Folder Artist"):
+        
+        mock_audio = MagicMock()
+        mock_audio.tag.artist = ""
+        mock_audio.tag.title = ""
+        mock_load.return_value = mock_audio
+        
+        tab = FixerTab()
+        result = tab._load_file_entry(mp3_file, {})
+        
+        # Should use folder name instead of digit
+        assert result["suggested_artist"] == "Folder Artist"
+        
+        tab.deleteLater()
+
+
+def test_load_file_entry_corrupted_file(temp_dir):
+    """Test _load_file_entry returns None for corrupted file."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    mp3_file = temp_dir / "corrupted.mp3"
+    mp3_file.write_bytes(b"not valid mp3 data")
+    
+    with patch('musichouse.ui.fixer_tab.load_mp3_safely', return_value=None):
+        tab = FixerTab()
+        result = tab._load_file_entry(mp3_file, {})
+        
+        assert result is None
+        
+        tab.deleteLater()
+
+
+def test_load_file_entry_no_tag(temp_dir):
+    """Test _load_file_entry returns None when file has no tag."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    mp3_file = temp_dir / "no_tag.mp3"
+    mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    with patch('musichouse.ui.fixer_tab.load_mp3_safely') as mock_load:
+        mock_audio = MagicMock()
+        mock_audio.tag = None
+        mock_load.return_value = mock_audio
+        
+        tab = FixerTab()
+        result = tab._load_file_entry(mp3_file, {})
+        
+        assert result is None
+        
+        tab.deleteLater()
+
+
+# ============================================================================
+# _set_all_checkboxes tests
+# ============================================================================
+
+def test_set_all_checkboxes_checked(fixer_tab, temp_dir):
+    """Test _set_all_checkboxes sets all to checked."""
+    for i in range(3):
+        entry = {
+            "path": temp_dir / f"file{i}.mp3",
+            "filename": f"file{i}.mp3",
+            "existing_artist": "",
+            "existing_title": "Title",
+            "suggested_artist": "Artist",
+            "suggested_title": "Suggested Title",
+            "missing_artist": True,
+            "missing_title": False,
+        }
+        fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    fixer_tab._set_all_checkboxes(True)
+    
+    for row in range(3):
+        checkbox = fixer_tab._table.item(row, 0)
+        assert checkbox.checkState() == Qt.CheckState.Checked
+
+
+def test_set_all_checkboxes_unchecked(fixer_tab, temp_dir):
+    """Test _set_all_checkboxes sets all to unchecked."""
+    for i in range(3):
+        entry = {
+            "path": temp_dir / f"file{i}.mp3",
+            "filename": f"file{i}.mp3",
+            "existing_artist": "",
+            "existing_title": "Title",
+            "suggested_artist": "Artist",
+            "suggested_title": "Suggested Title",
+            "missing_artist": True,
+            "missing_title": False,
+        }
+        fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    # First check all
+    fixer_tab._set_all_checkboxes(True)
+    
+    # Then uncheck all
+    fixer_tab._set_all_checkboxes(False)
+    
+    for row in range(3):
+        checkbox = fixer_tab._table.item(row, 0)
+        assert checkbox.checkState() == Qt.CheckState.Unchecked
+
+
+# ============================================================================
+# closeEvent tests
+# ============================================================================
+
+def test_close_event_worker_running(qapp, temp_dir):
+    """Test closeEvent cancels running worker."""
+    from PyQt6.QtGui import QCloseEvent
+
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        mock_cache_instance = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        
+        # Create a mock running worker
+        mock_worker = MagicMock()
+        mock_worker.isRunning.return_value = True
+        tab._worker = mock_worker
+        
+        # Simulate close event
+        event = QCloseEvent()
+        tab.closeEvent(event)
+        
+        # Worker should be cancelled
+        assert mock_worker.cancel.called
+        assert mock_worker.wait.called
+        
+        tab.deleteLater()
+
+
+def test_close_event_worker_not_running(qapp, temp_dir):
+    """Test closeEvent does nothing if worker not running."""
+    from PyQt6.QtGui import QCloseEvent
+
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        mock_cache_instance = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        
+        # Create a mock stopped worker
+        mock_worker = MagicMock()
+        mock_worker.isRunning.return_value = False
+        tab._worker = mock_worker
+        
+        event = QCloseEvent()
+        tab.closeEvent(event)
+        
+        # Worker should NOT be cancelled
+        assert mock_worker.cancel.called is False
+        
+        tab.deleteLater()
+
+
+def test_close_event_no_worker(qapp, temp_dir):
+    """Test closeEvent when no worker exists."""
+    from PyQt6.QtGui import QCloseEvent
+
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        mock_cache_instance = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        
+        # No _worker attribute
+        assert not hasattr(tab, '_worker')
+        
+        event = QCloseEvent()
+        tab.closeEvent(event)  # Should not crash
+        
+        tab.deleteLater()
+
+
+# ============================================================================
+# _remove_fixed_rows tests
+# ============================================================================
+
+def test_remove_fixed_rows_single_file(fixer_tab, temp_dir):
+    """Test _remove_fixed_rows removes a single fixed file."""
+    for i in range(3):
+        entry = {
+            "path": temp_dir / f"file{i}.mp3",
+            "filename": f"file{i}.mp3",
+            "existing_artist": "",
+            "existing_title": "Title",
+            "suggested_artist": "Artist",
+            "suggested_title": "Suggested Title",
+            "missing_artist": True,
+            "missing_title": False,
+        }
+        fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    assert len(fixer_tab._files_data) == 3
+    
+    # Remove file1
+    fixer_tab._remove_fixed_rows([temp_dir / "file1.mp3"])
+    
+    assert len(fixer_tab._files_data) == 2
+    paths = [e["filename"] for e in fixer_tab._files_data]
+    assert "file1.mp3" not in paths
+    assert fixer_tab._table.rowCount() == 2
+
+
+def test_remove_fixed_rows_multiple_files(fixer_tab, temp_dir):
+    """Test _remove_fixed_rows removes multiple files."""
+    for i in range(5):
+        entry = {
+            "path": temp_dir / f"file{i}.mp3",
+            "filename": f"file{i}.mp3",
+            "existing_artist": "",
+            "existing_title": "Title",
+            "suggested_artist": "Artist",
+            "suggested_title": "Suggested Title",
+            "missing_artist": True,
+            "missing_title": False,
+        }
+        fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    # Remove files 1 and 3
+    fixer_tab._remove_fixed_rows([temp_dir / "file1.mp3", temp_dir / "file3.mp3"])
+    
+    assert len(fixer_tab._files_data) == 3
+    paths = [e["filename"] for e in fixer_tab._files_data]
+    assert "file1.mp3" not in paths
+    assert "file3.mp3" not in paths
+
+
+def test_remove_fixed_rows_empty_list(fixer_tab, temp_dir):
+    """Test _remove_fixed_rows with empty list does nothing."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "",
+        "existing_title": "Title",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": False,
+    }
+    fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    initial_count = len(fixer_tab._files_data)
+    
+    fixer_tab._remove_fixed_rows([])
+    
+    assert len(fixer_tab._files_data) == initial_count
+
+
+# ============================================================================
+# _update_empty_state tests
+# ============================================================================
+
+def test_update_empty_state_shows_label(fixer_tab):
+    """Test _update_empty_state shows label when no data."""
+    fixer_tab.show()  # Need to show for visibility to work properly
+    # When has_data=False, label should be visible
+    fixer_tab._update_empty_state(False)
+    assert fixer_tab._empty_label.isVisible() is True
+
+
+def test_update_empty_state_hides_label(fixer_tab):
+    """Test _update_empty_state hides label when has data."""
+    fixer_tab.show()
+    fixer_tab._update_empty_state(True)
+    assert fixer_tab._empty_label.isVisible() is False
+
+
+# ============================================================================
+# Edge case tests for uncovered lines
+# ============================================================================
+
+def test_select_all_cb_none(qapp):
+    """Test _update_header_checkbox_state early return when _select_all_cb is None."""
+    from musichouse.ui.fixer_tab import FixerTab
+    
+    with patch('musichouse.leaderboard_cache.LeaderboardCache') as MockCache:
+        mock_cache_instance = MagicMock()
+        MockCache.return_value = mock_cache_instance
+        
+        tab = FixerTab()
+        tab.show()
+        
+        # Set _select_all_cb to None
+        tab._select_all_cb = None
+        
+        # Should not crash
+        tab._update_header_checkbox_state()
+        
+        tab.deleteLater()
+
+
+def test_add_file_entry_with_string_path(fixer_tab, temp_dir):
+    """Test add_file_entry converts string path to Path object."""
+    entry = {
+        "path": str(temp_dir / "file1.mp3"),  # String path
+        "filename": "file1.mp3",
+        "existing_artist": "",
+        "existing_title": "Title",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": False,
+    }
+    fixer_tab.add_file_entry(entry)
+    
+    # Path should be converted to Path object
+    from pathlib import Path
+    assert isinstance(fixer_tab._files_data[0]["path"], Path)
+
+
+def test_auto_fix_all_with_invalid_data_idx(fixer_tab, temp_dir):
+    """Test that auto_fix_all skips rows with invalid data_idx."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "",
+        "existing_title": "Title",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": False,
+    }
+    fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    # Set data_idx to None to trigger the continue statement
+    checkbox = fixer_tab._table.item(0, 0)
+    checkbox.setData(Qt.ItemDataRole.UserRole, None)  # Invalid data_idx
+    
+    with patch("musichouse.ui.fixer_tab.TagFixWorker") as MockWorker:
+        mock_instance = MagicMock()
+        MockWorker.return_value = mock_instance
+        
+        # Should not crash - will create worker with empty list
+        fixer_tab.auto_fix_all()
+        
+        # Worker should be created but with empty files_to_fix list
+        # because the only row has invalid data_idx
+        assert MockWorker.called
+        call_args = MockWorker.call_args
+        assert call_args[0][0] == []  # files_to_fix is empty
+        assert call_args[1]["auto_fix"] is True  # auto_fix=True
+
+
+def test_on_cell_changed_invalid_data_idx(fixer_tab, temp_dir):
+    """Test _on_cell_changed returns early when data_idx is None."""
+    entry = {
+        "path": temp_dir / "file1.mp3",
+        "filename": "file1.mp3",
+        "existing_artist": "Original Artist",
+        "existing_title": "Title",
+        "suggested_artist": "Artist",
+        "suggested_title": "Suggested Title",
+        "missing_artist": True,
+        "missing_title": False,
+    }
+    fixer_tab.add_file_entry(entry)
+    fixer_tab._apply_filter()
+    
+    # Manually set data to None to trigger the early return
+    fixer_tab._table.item(0, 0).setData(Qt.ItemDataRole.UserRole, None)
+    
+    # Should not crash
+    fixer_tab._on_cell_changed(0, 2)
+    
+    # Data should remain unchanged (early return)
+    assert fixer_tab._files_data[0]["existing_artist"] == "Original Artist"
 
 
 

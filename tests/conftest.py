@@ -216,4 +216,8 @@ def main_window(qapp):
     
     window = MainWindow()
     yield window
+    # Reset scan state so closeEvent takes the clean path instead of
+    # opening a modal "Scan in Progress" QMessageBox that blocks tests.
+    window._is_scanning = False
+    window._scan_worker = None
     window.close()

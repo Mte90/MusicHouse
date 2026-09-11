@@ -84,7 +84,10 @@ class AIClient:
             # API returned an error status code (401, 403, 500, etc.)
             error_msg = f"API error: {e.code} {e.reason}"
             logger.error(error_msg)
-            raise APIConnectionError(error_msg)
+            try:
+                raise APIConnectionError(error_msg)
+            finally:
+                e.close()
             
         except TimeoutError:
             # Request timed out

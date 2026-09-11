@@ -132,22 +132,28 @@ class MusicBrainzClient:
         except urllib.error.HTTPError as e:
             self._last_request_time = time.time()
 
-            if e.code == 404:
-                raise MusicBrainzNotFoundError(f"Artist not found: {url}")
+            try:
+                if e.code == 404:
+                    raise MusicBrainzNotFoundError(f"Artist not found: {url}")
 
-            if e.code in (503, 429):
-                retry_after = self._get_retry_after(e)
-                time.sleep(retry_after + 0.5)
+                if e.code in (503, 429):
+                    retry_after = self._get_retry_after(e)
+                    time.sleep(retry_after + 0.5)
 
-                try:
-                    with urllib.request.urlopen(req, timeout=15) as retry_response:
-                        self._last_request_time = time.time()
-                        data = retry_response.read().decode("utf-8")
-                        return json.loads(data)
-                except urllib.error.HTTPError as retry_error:
-                    raise MusicBrainzError(f"HTTP error {retry_error.code}: {retry_error.reason}")
+                    try:
+                        with urllib.request.urlopen(req, timeout=15) as retry_response:
+                            self._last_request_time = time.time()
+                            data = retry_response.read().decode("utf-8")
+                            return json.loads(data)
+                    except urllib.error.HTTPError as retry_error:
+                        try:
+                            raise MusicBrainzError(f"HTTP error {retry_error.code}: {retry_error.reason}")
+                        finally:
+                            retry_error.close()
 
-            raise MusicBrainzError(f"HTTP error {e.code}: {e.reason}")
+                raise MusicBrainzError(f"HTTP error {e.code}: {e.reason}")
+            finally:
+                e.close()
 
         except urllib.error.URLError as e:
             raise MusicBrainzError(f"Network error: {e.reason}")
