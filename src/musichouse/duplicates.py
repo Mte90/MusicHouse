@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from musichouse.fingerprint import (
     durations_match,
     is_fpcalc_available,
     similarity_percent,
 )
 from musichouse.leaderboard_cache import LeaderboardCache
+
+logger = logging.getLogger(__name__)
 
 SIMILARITY_THRESHOLD = 85.0  # percent
 DURATION_TOLERANCE = 2.0     # seconds
@@ -96,13 +100,25 @@ def find_duplicates_fingerprint(cache: LeaderboardCache) -> list[list[dict]]:
     Returns list of duplicate groups, each group is a list of dicts:
     {"path": str, "artist": str, "title": str, "size": int, "duration": float, "similarity": float}
     Only returns groups with 2+ files.
+    
+    Skips pairs involving malformed fingerprints (non-empty but len % 4 != 0).
+    Logs a summary warning of corrupt fingerprints found.
     """
     rows = _get_all_scan_rows(cache)
     
-    files_with_fp = [
-        r for r in rows 
-        if r['fingerprint'] is not None and r['duration'] is not None
-    ]
+    # Track malformed fingerprints for logging
+    malformed_paths: list[str] = []
+    
+    files_with_fp = []
+    for r in rows:
+        fp = r['fingerprint']
+        if fp is None or r['duration'] is None:
+            continue
+        # Check for malformed fingerprint (non-empty but not multiple of 4)
+        if len(fp) > 0 and len(fp) % 4 != 0:
+            malformed_paths.append(r['path'])
+            continue
+        files_with_fp.append(r)
     
     duration_buckets: dict[int, list[dict]] = {}
     for f in files_with_fp:
@@ -114,6 +130,10 @@ def find_duplicates_fingerprint(cache: LeaderboardCache) -> list[list[dict]]:
     uf = _UnionFind()
     file_by_path: dict[str, dict] = {}
     
+    # Log malformed fingerprints if any were found
+    if malformed_paths:
+        logger.warning(f"Found {len(malformed_paths)} corrupt fingerprint(s): {malformed_paths}")
+    
     for bucket_key, files in duration_buckets.items():
         for i, f1 in enumerate(files):
             path_i = f1['path']
@@ -122,7 +142,11 @@ def find_duplicates_fingerprint(cache: LeaderboardCache) -> list[list[dict]]:
                 f2 = files[j]
                 if not durations_match(f1['duration'], f2['duration'], DURATION_TOLERANCE):
                     continue
-                sim = similarity_percent(f1['fingerprint'], f2['fingerprint'])
+                # Skip pairs with malformed fingerprints (already filtered, but double-check)
+                fp1, fp2 = f1['fingerprint'], f2['fingerprint']
+                if (len(fp1) > 0 and len(fp1) % 4 != 0) or (len(fp2) > 0 and len(fp2) % 4 != 0):
+                    continue
+                sim = similarity_percent(fp1, fp2)
                 if sim >= SIMILARITY_THRESHOLD:
                     idx_i = path_i
                     idx_j = f2['path']
@@ -146,7 +170,12 @@ def find_duplicates_fingerprint(cache: LeaderboardCache) -> list[list[dict]]:
             if f['path'] == ref['path']:
                 sim = 100.0
             else:
-                sim = similarity_percent(ref_fp, f['fingerprint'])
+                fp = f['fingerprint']
+                # Skip if reference or target fingerprint is malformed
+                if (len(ref_fp) > 0 and len(ref_fp) % 4 != 0) or (len(fp) > 0 and len(fp) % 4 != 0):
+                    sim = 0.0
+                else:
+                    sim = similarity_percent(ref_fp, fp)
             
             group_result.append({
                 'path': f['path'],

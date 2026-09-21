@@ -9,9 +9,12 @@ src_path = Path(__file__).parent / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
-from musichouse.ui import MainWindow  # noqa: E402
-from musichouse import log_setup  # noqa: E402
+from PyQt6.QtWidgets import QApplication
+
+from musichouse import log_setup
+from musichouse.ui import MainWindow
+
+log_setup.configure_third_party_loggers()
 
 logger = log_setup.get_logger(__name__)
 

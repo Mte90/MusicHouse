@@ -27,6 +27,34 @@ from musichouse.utils import load_mp3_safely
 logger = logging.get_logger(__name__)
 
 
+def _clean_invalid_date_frames(tag) -> None:
+    """Remove date frames with unparseable values (e.g., "0").
+    
+    Args:
+        tag: eyed3 id3.Tag instance to clean.
+    """
+    from eyed3.id3 import frames as id3_frames
+    
+    # All date frame IDs (current and deprecated)
+    date_frame_ids = set(id3_frames.DATE_FIDS) | set(id3_frames.DEPRECATED_DATE_FIDS)
+    
+    # Find and remove invalid date frames
+    frames_to_remove = []
+    for frame_id in date_frame_ids:
+        # Get all frames with this ID
+        for frame in tag.frame_set.getAllFrames(frame_id):
+            # Check if the frame's text/date value is invalid (e.g., "0")
+            if hasattr(frame, 'text') and frame.text:
+                text_value = str(frame.text)
+                # Invalid values: "0", empty after strip, or obviously malformed
+                if text_value.strip() == "0" or not text_value.strip():
+                    frames_to_remove.append((frame_id, frame))
+    
+    # Remove the invalid frames
+    for frame_id, frame in frames_to_remove:
+        tag.frame_set.pop(frame_id, None)
+
+
 class TagPreviewDialog(QDialog):
     """Dialog to preview and confirm tag changes."""
 
@@ -178,6 +206,9 @@ def write_tags(
         audiofile.tag.title = title
         if genre:
             audiofile.tag.genre = genre
+
+        # T2: Clean invalid date frames (e.g., "0" that causes "Invalid date: 0" spam)
+        _clean_invalid_date_frames(audiofile.tag)
 
         # T42/T43: Save with specific error handling
         try:

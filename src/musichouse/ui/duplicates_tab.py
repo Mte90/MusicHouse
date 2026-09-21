@@ -144,13 +144,18 @@ class DuplicatesTab(QWidget):
         self._progress_bar.setVisible(True)
         self._progress_bar.setRange(0, 0)
         
-        # Use the helper to find duplicates based on cache
-        groups = find_duplicates(self._cache)
-        
-        self._display_duplicates(groups)
-        self._progress_bar.setVisible(False)
-        self._status_label.setText(f"Found {len(groups)} groups of duplicates.")
-        self._set_ui_busy(False)
+        try:
+            # Use the helper to find duplicates based on cache
+            groups = find_duplicates(self._cache)
+            self._display_duplicates(groups)
+            self._status_label.setText(f"Found {len(groups)} groups of duplicates.")
+        except Exception as e:
+            logger.exception("Error finding duplicates")
+            QMessageBox.critical(self, "Error", f"Failed to find duplicates: {e}")
+            self._status_label.setText("Error finding duplicates.")
+        finally:
+            self._progress_bar.setVisible(False)
+            self._set_ui_busy(False)
 
     def _display_duplicates(self, groups: list[list[dict]]):
         self._table.setRowCount(0)

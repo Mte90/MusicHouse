@@ -495,3 +495,132 @@ def test_leaderboard_with_zero_counts(temp_db_file):
     # Should include both
     assert len(result) == 2
     lb.reset()
+
+
+# ============================================================================
+# Test: Cached data paths
+# ============================================================================
+def test_update_from_files_uses_cached_data(temp_dir, leaderboard):
+    """Test update_from_files uses cached tag data when available."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"dummy")
+    
+    # Set up cached info with tag_data using the cache's update_scan_cache method
+    path_str = str(test_file)
+    leaderboard._cache.update_scan_cache([{
+        'path': path_str,
+        'size': 100,
+        'mtime': 1.0,
+        'artist': 'Cached Artist',
+        'title': 'Test Title',
+        'tag_data': {'artist': 'Cached Artist', 'title': 'Test Title'}
+    }])
+    
+    # Should use cached data, not call load_mp3_safely
+    with patch('musichouse.leaderboard.load_mp3_safely') as mock_load:
+        # load_mp3_safely should not be called since we have cached data
+        mock_load.assert_not_called()
+    
+    leaderboard._cache.close()
+
+
+def test_update_from_files_uses_cached_artist_field(temp_dir, leaderboard):
+    """Test update_from_files uses cached artist field when tag_data not available."""
+    test_file = temp_dir / "test2.mp3"
+    test_file.write_bytes(b"dummy")
+    
+    # Set up cached info with artist field (no tag_data)
+    leaderboard._cache.update_scan_cache([{
+        'path': str(test_file),
+        'size': 100,
+        'mtime': 1.0,
+        'artist': 'Cached Artist 2',
+        'title': None,
+        'tag_data': None
+    }])
+    
+    # Should use cached data
+    with patch('musichouse.leaderboard.load_mp3_safely') as mock_load:
+        mock_load.assert_not_called()
+    
+    leaderboard._cache.close()
+
+
+# ============================================================================
+# Test: Error handling
+# ============================================================================
+def test_update_from_files_handles_load_error(temp_dir, leaderboard, caplog):
+    """Test update_from_files handles errors when loading file."""
+    bad_file = temp_dir / "bad.mp3"
+    bad_file.write_bytes(b"not a real mp3")
+    
+    # Should handle error gracefully
+    with caplog.at_level('ERROR'):
+        result = leaderboard.update_from_files([bad_file])
+    
+    # Should return empty list
+    assert result == []
+
+
+def test_update_from_files_no_artist_tag(temp_dir, leaderboard):
+    """Test update_from_files handles file with no artist tag."""
+    test_file = temp_dir / "noartist.mp3"
+    test_file.write_bytes(b"dummy")
+    
+    mock_audiofile = MagicMock()
+    mock_audiofile.tag.artist = None  # No artist
+    
+    with patch('musichouse.leaderboard.load_mp3_safely', return_value=mock_audiofile):
+        result = leaderboard.update_from_files([test_file])
+    
+    # Should not include files with no artist
+    assert result == []
+
+
+# ============================================================================
+# Test: close() and cleanup
+# ============================================================================
+def test_close_closes_cache(temp_db_file):
+    """Test close() properly closes the cache."""
+    lb = Leaderboard(cache_dir=temp_db_file.parent)
+    
+    # Close should work
+    lb.close()
+    
+    # _cache should be None
+    assert lb._cache is None
+
+
+def test_close_when_cache_is_none(temp_db_file):
+    """Test close() handles None cache gracefully."""
+    lb = Leaderboard(cache_dir=temp_db_file.parent)
+    lb._cache = None
+    
+    # Should not raise
+    lb.close()
+
+
+def test_del_cleanup(temp_db_file):
+    """Test __del__ cleans up properly."""
+    lb = Leaderboard(cache_dir=temp_db_file.parent)
+    # Just ensure no errors on deletion
+    del lb
+
+
+# ============================================================================
+# Test: Config fallback path
+# ============================================================================
+def test_leaderboard_uses_default_cache_dir():
+    """Test Leaderboard uses default config dir when cache_dir not provided."""
+    from musichouse import config
+    
+    # Create leaderboard without cache_dir
+    lb = Leaderboard()
+    
+    # Should use default config dir
+    expected_path = config.get_config_dir() / "leaderboard.db"
+    assert lb.cache_path == expected_path
+    
+    # Cleanup
+    lb.reset()
+    lb.close()

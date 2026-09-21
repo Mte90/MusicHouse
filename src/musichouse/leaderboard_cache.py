@@ -327,6 +327,62 @@ class LeaderboardCache:
         )
         conn.commit()
 
+    def get_similar_artists(self, seed: str) -> list[dict]:
+        """Get cached similar artists for a seed.
+        
+        Args:
+            seed: Seed artist name.
+            
+        Returns:
+            List of dicts with "artist" and "reason" keys, or empty list if none cached.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT similar_json FROM similar_artists WHERE artist_name = ?",
+            (seed,)
+        )
+        row = cursor.fetchone()
+        if row and row['similar_json']:
+            import json
+            try:
+                return json.loads(row['similar_json'])
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return []
+
+    def save_similar_artists(self, seed: str, suggestions: list[dict]) -> None:
+        """Save similar artists for a seed (replaces all existing).
+        
+        Args:
+            seed: Seed artist name.
+            suggestions: List of dicts with "artist" and "reason" keys.
+        """
+        import json
+        conn = self._get_connection()
+        # REPLACE-all semantics: delete existing, then insert new
+        conn.execute(
+            "DELETE FROM similar_artists WHERE artist_name = ?",
+            (seed,)
+        )
+        conn.execute(
+            """INSERT INTO similar_artists (artist_name, similar_json, last_updated)
+               VALUES (?, ?, ?)""",
+            (seed, json.dumps(suggestions), int(time.time()))
+        )
+        conn.commit()
+
+    def get_all_indexed_artists(self) -> list[str]:
+        """Get distinct artist names from scan_cache.
+        
+        Returns:
+            List of unique artist strings (excluding None/empty).
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT DISTINCT artist FROM scan_cache WHERE artist IS NOT NULL AND artist != ''"
+        )
+        return [row['artist'] for row in cursor.fetchall() if row['artist']]
+
     def update_scan_cache(self, files_info: list) -> None:
         """Update scan cache with file info.
         

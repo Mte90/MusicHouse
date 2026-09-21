@@ -1,7 +1,9 @@
 """Unit tests for Chromaprint fingerprinting module."""
 
+import logging
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -28,7 +30,8 @@ def mock_fpcalc_success(monkeypatch):
         stdout='{"duration": 182.45, "fingerprint": "AQAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAABAAAAAA=="}',
         stderr="",
     )
-    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    import musichouse.fingerprint as fp_module
+    fp_module.subprocess = MagicMock(run=lambda *args, **kwargs: mock_result)
     # Also mock is_fpcalc_available to return True
     monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
 
@@ -42,7 +45,8 @@ def mock_fpcalc_failure(monkeypatch):
         stdout="",
         stderr="fpcalc: error decoding file",
     )
-    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    import musichouse.fingerprint as fp_module
+    fp_module.subprocess = MagicMock(run=lambda *args, **kwargs: mock_result)
     monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
 
 
@@ -136,7 +140,8 @@ def test_compute_fingerprint_invalid_json(monkeypatch):
         stdout="not valid json",
         stderr="",
     )
-    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    import musichouse.fingerprint as fp_module
+    fp_module.subprocess = MagicMock(run=lambda *args, **kwargs: mock_result)
     monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
     
     with pytest.raises(FingerprintError, match="parse fpcalc output"):
@@ -151,7 +156,8 @@ def test_compute_fingerprint_missing_fields(monkeypatch):
         stdout='{"duration": 182.45}',  # Missing fingerprint
         stderr="",
     )
-    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    import musichouse.fingerprint as fp_module
+    fp_module.subprocess = MagicMock(run=lambda *args, **kwargs: mock_result)
     monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
     
     with pytest.raises(FingerprintError, match="parse fpcalc output"):
@@ -188,6 +194,30 @@ def test_hamming_distance_empty():
     assert hamming_distance(b"", b"") == 0
     assert hamming_distance(b"", b"\x00\x00\x00\x00") == 0
     assert hamming_distance(b"\x00\x00\x00\x00", b"") == 0
+
+
+def test_hamming_distance_malformed_blob(caplog):
+    """Test hamming distance with malformed (non-multiple of 4) blob returns sentinel."""
+    # 5-byte blob (not a multiple of 4)
+    malformed = b"\x00\x01\x02\x03\x04"
+    valid = b"\x00\x00\x00\x00"
+    
+    with caplog.at_level(logging.WARNING):
+        result = hamming_distance(malformed, valid)
+    
+    assert result == 10**9
+    assert "Malformed fingerprint" in caplog.text
+
+
+def test_hamming_distance_both_malformed(caplog):
+    """Test hamming distance with both blobs malformed returns sentinel."""
+    malformed1 = b"\x00\x01\x02"
+    malformed2 = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08"
+    
+    with caplog.at_level(logging.WARNING):
+        result = hamming_distance(malformed1, malformed2)
+    
+    assert result == 10**9
 
 
 def test_hamming_distance_partial_difference():
@@ -248,6 +278,30 @@ def test_similarity_percent_different_lengths():
     assert similarity_percent(fp1, fp2) == 100.0
 
 
+def test_similarity_percent_malformed_blob(caplog):
+    """Test similarity_percent with malformed (5-byte) blob returns 0.0, no crash."""
+    # 5-byte blob (not a multiple of 4)
+    malformed = b"\x00\x01\x02\x03\x04"
+    valid = b"\x00\x00\x00\x00"
+    
+    with caplog.at_level(logging.WARNING):
+        result = similarity_percent(malformed, valid)
+    
+    assert result == 0.0
+    assert "Malformed fingerprint" in caplog.text
+
+
+def test_similarity_percent_both_malformed(caplog):
+    """Test similarity_percent with both blobs malformed returns 0.0."""
+    malformed1 = b"\x00\x01\x02"
+    malformed2 = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08"
+    
+    with caplog.at_level(logging.WARNING):
+        result = similarity_percent(malformed1, malformed2)
+    
+    assert result == 0.0
+
+
 # ============================================================================
 # Test: durations_match()
 # ============================================================================
@@ -298,7 +352,8 @@ def test_compute_fingerprint_urlsafe_base64(monkeypatch):
         stdout=f'{{"duration": 182.45, "fingerprint": "{fp_urlsafe}"}}',
         stderr="",
     )
-    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    import musichouse.fingerprint as fp_module
+    fp_module.subprocess = MagicMock(run=lambda *args, **kwargs: mock_result)
     monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
 
     fp_bytes, duration = compute_fingerprint("/fake/path.mp3")
@@ -320,7 +375,8 @@ def test_compute_fingerprint_urlsafe_base64_decodes_correctly(monkeypatch):
         stdout=f'{{"duration": 100.0, "fingerprint": "{fp_urlsafe}"}}',
         stderr="",
     )
-    monkeypatch.setattr("musichouse.fingerprint.subprocess.run", lambda *args, **kwargs: mock_result)
+    import musichouse.fingerprint as fp_module
+    fp_module.subprocess = MagicMock(run=lambda *args, **kwargs: mock_result)
     monkeypatch.setattr("musichouse.fingerprint.FPCALC_AVAILABLE", True)
 
     fp_bytes, _ = compute_fingerprint("/fake/path.mp3")

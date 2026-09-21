@@ -6,6 +6,8 @@ Uses mocking to avoid modifying real MP3 files.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from musichouse.tag_writer import TagPreviewDialog, write_tags
 
 # ============================================================================
@@ -386,3 +388,349 @@ class TestWriteTagsEdgeCases:
             # Verify the edited artist was written, not the suggested one
             mock_tag.artist = edited_artist
             mock_audiofile.tag.save.assert_called_once()
+
+# ============================================================================
+# _clean_invalid_date_frames Tests
+# ============================================================================
+
+class TestCleanInvalidDateFrames:
+    """Tests for _clean_invalid_date_frames() helper function."""
+
+    def test_clean_removes_zero_date_frames(self, temp_dir):
+        """Test that date frames with text "0" are removed."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        # Create mock frame with invalid date "0"
+        mock_invalid_frame = MagicMock()
+        mock_invalid_frame.text = "0"
+        
+        # Mock frame set - getAllFrames takes frame_id as argument
+        mock_frame_set = MagicMock()
+        mock_frame_set.getAllFrames.side_effect = lambda fid: [mock_invalid_frame] if fid == 'TDRC' else []
+        
+        mock_tag = MagicMock()
+        mock_tag.artist = ""  # Empty so write proceeds
+        mock_tag.title = ""   # Empty so write proceeds
+        mock_tag.frame_set = mock_frame_set
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = mock_tag
+            mock_load.return_value = mock_audiofile
+            
+            with patch('eyed3.id3.frames') as mock_frames:
+                mock_frames.DATE_FIDS = {'TDRC'}
+                mock_frames.DEPRECATED_DATE_FIDS = set()
+                
+                result = write_tags(mp3_file, "Artist", "Title")
+                
+                assert result is True
+                # Verify the invalid frame was removed
+                mock_tag.frame_set.pop.assert_called_with('TDRC', None)
+
+    def test_clean_preserves_valid_date_frames(self, temp_dir):
+        """Test that valid date frames are preserved."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        # Mock frame with valid date
+        mock_valid_frame = MagicMock()
+        mock_valid_frame.text = "2023-01-15"
+        
+        mock_frame_set = MagicMock()
+        mock_frame_set.getAllFrames.side_effect = lambda fid: [mock_valid_frame] if fid == 'TDRC' else []
+        
+        mock_tag = MagicMock()
+        mock_tag.frame_set = mock_frame_set
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = mock_tag
+            mock_load.return_value = mock_audiofile
+            
+            with patch('eyed3.id3.frames') as mock_frames:
+                mock_frames.DATE_FIDS = {'TDRC'}
+                mock_frames.DEPRECATED_DATE_FIDS = set()
+                
+                result = write_tags(mp3_file, "Artist", "Title")
+                
+                assert result is True
+                # Verify no frames were removed
+                mock_tag.frame_set.pop.assert_not_called()
+
+    def test_clean_removes_multiple_invalid_date_frames(self, temp_dir):
+        """Test that all invalid date frames are removed."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        # Mock multiple invalid frames for different date frame IDs
+        mock_frame_tdrc = MagicMock()
+        mock_frame_tdrc.text = "0"
+        mock_frame_tdat = MagicMock()
+        mock_frame_tdat.text = "   "  # whitespace only - gets stripped to empty
+        
+        mock_frame_set = MagicMock()
+        def get_frames_side_effect(fid):
+            if fid == 'TDRC':
+                return [mock_frame_tdrc]
+            elif fid == 'TDAT':
+                return [mock_frame_tdat]
+            return []
+        mock_frame_set.getAllFrames.side_effect = get_frames_side_effect
+        
+        mock_tag = MagicMock()
+        mock_tag.artist = ""  # Empty so write proceeds
+        mock_tag.title = ""   # Empty so write proceeds
+        mock_tag.frame_set = mock_frame_set
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = mock_tag
+            mock_load.return_value = mock_audiofile
+            
+            with patch('eyed3.id3.frames') as mock_frames:
+                mock_frames.DATE_FIDS = {'TDRC'}
+                mock_frames.DEPRECATED_DATE_FIDS = {'TDAT'}
+                
+                result = write_tags(mp3_file, "Artist", "Title")
+                
+                assert result is True
+                # Verify all invalid frames were removed (2 frames: "0" and whitespace)
+                assert mock_tag.frame_set.pop.call_count == 2
+
+    def test_clean_handles_blank_date_frames(self, temp_dir):
+        """Test that whitespace-only date frames are removed."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        # Mock frame with whitespace-only text (empty strings are skipped by the code)
+        mock_whitespace_frame = MagicMock()
+        mock_whitespace_frame.text = "   "  # whitespace that strips to empty
+        
+        mock_frame_set = MagicMock()
+        mock_frame_set.getAllFrames.side_effect = lambda fid: [mock_whitespace_frame] if fid == 'TDRC' else []
+        
+        mock_tag = MagicMock()
+        mock_tag.artist = ""  # Empty so write proceeds
+        mock_tag.title = ""   # Empty so write proceeds
+        mock_tag.frame_set = mock_frame_set
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = mock_tag
+            mock_load.return_value = mock_audiofile
+            
+            with patch('eyed3.id3.frames') as mock_frames:
+                mock_frames.DATE_FIDS = {'TDRC'}
+                mock_frames.DEPRECATED_DATE_FIDS = set()
+                
+                result = write_tags(mp3_file, "Artist", "Title")
+                
+                assert result is True
+                mock_tag.frame_set.pop.assert_called_with('TDRC', None)
+
+    def test_clean_handles_frames_without_text_attr(self, temp_dir):
+        """Test that frames without text attribute are handled gracefully."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        # Mock frame without text attribute
+        mock_no_text_frame = MagicMock()
+        del mock_no_text_frame.text  # Remove text attribute
+        
+        mock_frame_set = MagicMock()
+        mock_frame_set.getAllFrames.side_effect = lambda fid: [mock_no_text_frame] if fid == 'TDRC' else []
+        
+        mock_tag = MagicMock()
+        mock_tag.frame_set = mock_frame_set
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = mock_tag
+            mock_load.return_value = mock_audiofile
+            
+            with patch('eyed3.id3.frames') as mock_frames:
+                mock_frames.DATE_FIDS = {'TDRC'}
+                mock_frames.DEPRECATED_DATE_FIDS = set()
+                
+                result = write_tags(mp3_file, "Artist", "Title")
+                
+                assert result is True
+                # Frame without text should not be removed
+                mock_tag.frame_set.pop.assert_not_called()
+
+    def test_clean_frame_with_none_text(self, temp_dir):
+        """Test that frames where text attribute exists but is None are handled."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+        # Mock frame where text is None (falsy but attribute exists)
+        mock_none_text_frame = MagicMock()
+        mock_none_text_frame.text = None
+        
+        mock_frame_set = MagicMock()
+        mock_frame_set.getAllFrames.side_effect = lambda fid: [mock_none_text_frame] if fid == 'TDRC' else []
+        
+        mock_tag = MagicMock()
+        mock_tag.artist = ""  # Empty so write proceeds
+        mock_tag.title = ""   # Empty so write proceeds
+        mock_tag.frame_set = mock_frame_set
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = mock_tag
+            mock_load.return_value = mock_audiofile
+            
+            with patch('eyed3.id3.frames') as mock_frames:
+                mock_frames.DATE_FIDS = {'TDRC'}
+                mock_frames.DEPRECATED_DATE_FIDS = set()
+                
+                result = write_tags(mp3_file, "Artist", "Title")
+                
+                assert result is True
+                # Frame with None text should not be removed (falsy check)
+                mock_tag.frame_set.pop.assert_not_called()
+
+
+# ============================================================================
+# write_tags Error Path Tests
+# ============================================================================
+
+class TestWriteTagsErrorPaths:
+    """Tests for write_tags() error handling paths."""
+
+    def test_write_tags_file_not_found(self, temp_dir):
+        """Test write_tags() raises FileNotFoundError for missing file."""
+        mp3_file = temp_dir / "NonExistent.mp3"
+        
+        with pytest.raises(FileNotFoundError):
+            write_tags(mp3_file, "Artist", "Title")
+
+    def test_write_tags_corrupted_file(self, temp_dir):
+        """Test write_tags() raises CorruptedFileError when load fails."""
+        mp3_file = temp_dir / "Corrupted.mp3"
+        mp3_file.write_bytes(b"not a valid mp3 file")
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_load.return_value = None  # Simulate failed load
+            
+            from musichouse.error_handling import CorruptedFileError
+            with pytest.raises(CorruptedFileError):
+                write_tags(mp3_file, "Artist", "Title")
+
+    def test_write_tags_creates_tag_if_none(self, temp_dir):
+        """Test write_tags() initializes tag if audiofile.tag is None."""
+        mp3_file = temp_dir / "NoTag.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = None  # No tag exists
+            # initTag should set the tag attribute with empty artist/title
+            mock_new_tag = MagicMock()
+            mock_new_tag.artist = ""
+            mock_new_tag.title = ""
+            mock_audiofile.initTag.side_effect = lambda: setattr(mock_audiofile, 'tag', mock_new_tag)
+            mock_load.return_value = mock_audiofile
+            
+            result = write_tags(mp3_file, "Artist", "Title")
+            
+            assert result is True
+            mock_audiofile.initTag.assert_called_once()
+            mock_audiofile.tag.save.assert_called_once()
+
+    def test_write_tags_permission_error(self, temp_dir):
+        """Test write_tags() raises ReadOnlyFileError on PermissionError."""
+        mp3_file = temp_dir / "ReadOnly.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = MagicMock()
+            mock_audiofile.tag.artist = ""
+            mock_audiofile.tag.title = ""
+            mock_audiofile.tag.save.side_effect = PermissionError("Permission denied")
+            mock_load.return_value = mock_audiofile
+            
+            from musichouse.error_handling import ReadOnlyFileError
+            with pytest.raises(ReadOnlyFileError):
+                write_tags(mp3_file, "Artist", "Title")
+
+    def test_write_tags_os_error_file_locked(self, temp_dir):
+        """Test write_tags() raises FileLockedError on OS error with lock in message."""
+        mp3_file = temp_dir / "Locked.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = MagicMock()
+            mock_audiofile.tag.artist = ""
+            mock_audiofile.tag.title = ""
+            mock_audiofile.tag.save.side_effect = OSError("File is locked")
+            mock_load.return_value = mock_audiofile
+            
+            from musichouse.error_handling import FileLockedError
+            with pytest.raises(FileLockedError):
+                write_tags(mp3_file, "Artist", "Title")
+
+    def test_write_tags_os_error_other(self, temp_dir):
+        """Test write_tags() raises TagWriteError on other OS errors."""
+        mp3_file = temp_dir / "Error.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = MagicMock()
+            mock_audiofile.tag.artist = ""
+            mock_audiofile.tag.title = ""
+            mock_audiofile.tag.save.side_effect = OSError("Disk full")
+            mock_load.return_value = mock_audiofile
+            
+            from musichouse.error_handling import TagWriteError
+            with pytest.raises(TagWriteError):
+                write_tags(mp3_file, "Artist", "Title")
+
+    def test_write_tags_generic_error_restores_backup(self, temp_dir):
+        """Test write_tags() restores from backup on generic error."""
+        mp3_file = temp_dir / "Error.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load, patch('musichouse.tag_writer.shutil') as mock_shutil:
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = MagicMock()
+            mock_audiofile.tag.artist = ""
+            mock_audiofile.tag.title = ""
+            mock_audiofile.tag.save.side_effect = Exception("Something went wrong")
+            mock_load.return_value = mock_audiofile
+            
+            # Mock backup file existence check
+            mock_shutil.copy2 = MagicMock()
+            
+            from musichouse.error_handling import TagWriteError
+            with pytest.raises(TagWriteError):
+                write_tags(mp3_file, "Artist", "Title")
+            
+            # Verify restore was attempted
+            assert mock_shutil.copy2.called
+
+    def test_write_tags_backup_cleanup_error(self, temp_dir, caplog):
+        """Test write_tags() handles backup cleanup errors gracefully."""
+        mp3_file = temp_dir / "Test.mp3"
+        mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+        
+        with patch('musichouse.tag_writer.load_mp3_safely') as mock_load, patch('pathlib.Path.unlink') as mock_unlink:
+            mock_unlink.side_effect = PermissionError("Can't delete backup")
+            
+            mock_audiofile = MagicMock()
+            mock_audiofile.tag = MagicMock()
+            mock_audiofile.tag.artist = ""
+            mock_audiofile.tag.title = ""
+            mock_load.return_value = mock_audiofile
+            
+            # Should succeed despite backup cleanup error
+            result = write_tags(mp3_file, "Artist", "Title")
+            
+            assert result is True
+            # Warning should be logged
+            assert any("Failed to remove backup" in str(record.message) for record in caplog.records)

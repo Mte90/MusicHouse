@@ -35,3 +35,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true

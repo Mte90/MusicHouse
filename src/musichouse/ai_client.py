@@ -39,6 +39,47 @@ class AIClient:
             return result
         return result.get("artists", [])
 
+    def get_similar_artists_json(self, artist: str) -> list[dict]:
+        """Get similar artists as structured JSON.
+        
+        Prompts the LLM for a strict JSON array of objects with "artist" and "reason" fields.
+        
+        Args:
+            artist: Seed artist name.
+            
+        Returns:
+            List of dicts with "artist" (str) and "reason" (str) keys.
+            
+        Raises:
+            ValueError: If response is malformed or invalid shape.
+            APIParseError: If JSON parsing fails.
+            APIConnectionError: If API call fails.
+        """
+        prompt = f'''Provide ~8 artists similar to "{artist}". Return STRICT JSON array only, no markdown or prose.
+Each item: {{"artist": "<name>", "reason": "<one line explanation>"}}
+Example: [{{"artist": "Artist A", "reason": "Similar style"}}, {{"artist": "Artist B", "reason": "Same genre"}}]'''
+        
+        result = self._call_api(prompt)
+        
+        # Validate response shape
+        if not isinstance(result, list):
+            raise TypeError(f"Expected list response, got {type(result).__name__}")
+        
+        validated = []
+        for i, item in enumerate(result):
+            if not isinstance(item, dict):
+                raise TypeError(f"Item {i} is not a dict, got {type(item).__name__}")
+            if "artist" not in item:
+                raise ValueError(f"Item {i} missing required 'artist' field")
+            if not isinstance(item["artist"], str) or not item["artist"].strip():
+                raise ValueError(f"Item {i} 'artist' must be non-empty string")
+            reason = item.get("reason", "")
+            if not isinstance(reason, str):
+                raise TypeError(f"Item {i} 'reason' must be string if present")
+            validated.append({"artist": item["artist"].strip(), "reason": reason.strip()})
+        
+        return validated
+
     def get_artist_genres(self, artist: str) -> list[str]:
         """Get artist genres."""
         prompt = f'What genres is "{artist}"? Return JSON array.'

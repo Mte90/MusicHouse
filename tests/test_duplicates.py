@@ -1,13 +1,19 @@
 """Unit tests for duplicate detection module."""
 
+import logging
+
 import pytest
 
+from musichouse import log_setup
 from musichouse.duplicates import (
     _normalize_metadata,
     find_duplicates,
     find_duplicates_fingerprint,
     find_duplicates_metadata,
 )
+
+# Ensure logging is configured for tests
+log_setup.get_logger(__name__)
 
 
 # ============================================================================
@@ -242,6 +248,31 @@ def test_fingerprint_duplicates_transitive_grouping(cache):
     # Check that we have at least one group with 2+ files
     has_valid_group = any(len(g) >= 2 for g in result)
     assert has_valid_group
+
+
+def test_fingerprint_duplicates_malformed_blob_skipped(caplog, cache):
+    """Test that pairs with malformed fingerprints are skipped, no crash."""
+    conn = cache._get_connection()
+    
+    # Insert files: one with valid fp, one with malformed (5 bytes)
+    valid_fp = b"valid_fingerprint_" + b"\x00" * 2  # 20 bytes = multiple of 4
+    malformed_fp = b"bad" * 1 + b"\x00"  # 5 bytes - NOT multiple of 4
+    
+    conn.execute(
+        "INSERT INTO scan_cache (path, size, mtime, artist, title, scan_time, fingerprint, duration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("/music/valid.mp3", 5000000, 1000.0, "Artist", "Valid", 1000.0, valid_fp, 180.0)
+    )
+    conn.execute(
+        "INSERT INTO scan_cache (path, size, mtime, artist, title, scan_time, fingerprint, duration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("/music/malformed.mp3", 5000000, 1000.0, "Artist", "Malformed", 1000.0, malformed_fp, 180.0)
+    )
+    
+    # Caplog needs the logger name to capture logs
+    with caplog.at_level(logging.WARNING, logger="musichouse.duplicates"):
+        result = find_duplicates_fingerprint(cache)
+    
+    # Should not crash; malformed file should be skipped
+    assert result == []  # No duplicates found (only 1 valid file)
 
 
 # ============================================================================

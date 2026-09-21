@@ -1,11 +1,16 @@
 """Folder organization analyzer for MusicHouse."""
 
+import os
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from musichouse.log_setup import get_logger
+
 if TYPE_CHECKING:
     from musichouse.leaderboard_cache import LeaderboardCache
+
+logger = get_logger(__name__)
 
 
 class FolderType(Enum):
@@ -58,6 +63,7 @@ def analyze_folder_structure(base_path: Path, cache: "LeaderboardCache") -> list
         List of FolderInfo for all folders (genre containers and their subfolders).
     """
     results: list[FolderInfo] = []
+    skipped_dirs: list[str] = []
 
     # Get all cached files with their paths and artists
     conn = cache._get_connection()
@@ -66,19 +72,54 @@ def analyze_folder_structure(base_path: Path, cache: "LeaderboardCache") -> list
     )
     file_data = {row["path"]: row["artist"] for row in cursor.fetchall()}
 
-    # Walk the folder tree
-    for dirpath in base_path.rglob("*"):
-        if not dirpath.is_dir():
-            continue
+    def _walk_dir(path: Path) -> list[Path]:
+        """Recursively walk directories, catching OSError per entry."""
+        dirs: list[Path] = []
+        try:
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    try:
+                        entry_path = Path(entry.path)
+                        if entry.is_dir(follow_symlinks=False):
+                            dirs.append(entry_path)
+                            dirs.extend(_walk_dir(entry_path))
+                    except (PermissionError, OSError):
+                        skipped_dirs.append(str(entry_path))
+        except (PermissionError, OSError):
+            skipped_dirs.append(str(path))
+        return dirs
 
-        # Get subfolders
-        subfolders = [d for d in dirpath.iterdir() if d.is_dir()]
+    all_dirs = _walk_dir(base_path)
+
+    for dirpath in all_dirs:
+        # Get subfolders with error handling
+        subfolders: list[Path] = []
+        try:
+            with os.scandir(dirpath) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            subfolders.append(Path(entry.path))
+                    except (PermissionError, OSError):
+                        skipped_dirs.append(str(Path(entry.path)))
+        except (PermissionError, OSError):
+            skipped_dirs.append(str(dirpath))
+            continue
 
         # Get files in this folder (direct children only, not recursive)
         files_in_folder: list[Path] = []
-        for entry in dirpath.iterdir():
-            if entry.is_file() and entry.suffix.lower() == ".mp3":
-                files_in_folder.append(entry)
+        try:
+            with os.scandir(dirpath) as entries:
+                for entry in entries:
+                    try:
+                        entry_path = Path(entry.path)
+                        if entry.is_file() and entry_path.suffix.lower() == ".mp3":
+                            files_in_folder.append(entry_path)
+                    except (PermissionError, OSError):
+                        skipped_dirs.append(str(entry_path))
+        except (PermissionError, OSError):
+            skipped_dirs.append(str(dirpath))
+            continue
 
         # Get artists from cached data
         artists_in_folder: set[str] = set()
@@ -159,5 +200,16 @@ def analyze_folder_structure(base_path: Path, cache: "LeaderboardCache") -> list
                 artists=[],
                 file_count=0
             ))
+
+    # Log summary warning for skipped directories
+    if skipped_dirs:
+        unique_skipped = list(dict.fromkeys(skipped_dirs))  # Preserve order, remove dups
+        display_list = unique_skipped[:5]
+        extra = len(unique_skipped) - 5
+        if extra > 0:
+            warning_msg = f"{', '.join(display_list)} (+{extra} more)"
+        else:
+            warning_msg = ', '.join(display_list)
+        logger.warning(f"Skipped {len(unique_skipped)} unreadable directories: {warning_msg}")
 
     return results

@@ -4,6 +4,11 @@ import logging
 import sys
 
 
+def configure_third_party_loggers():
+    """Configure log levels for third-party libraries to reduce noise."""
+    logging.getLogger("eyed3").setLevel(logging.ERROR)
+
+
 def get_logger(name: str | None = None) -> logging.Logger:
     """Get a logger instance.
     

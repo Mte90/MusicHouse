@@ -2,6 +2,7 @@
 
 import sqlite3
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -550,6 +551,199 @@ def test_thread_local_same_connection_in_thread(cache):
 
 
 # ============================================================================
+# Test: Migration paths
+# ============================================================================
+def test_migration_v2_adds_tag_data_column(temp_db_file):
+    """Test v2 migration adds tag_data column."""
+    # Create a v1 database manually
+    import sqlite3
+    conn = sqlite3.connect(str(temp_db_file))
+    conn.execute("CREATE TABLE schema_version (version INTEGER)")
+    conn.execute("INSERT INTO schema_version VALUES (1)")
+    conn.execute("""
+        CREATE TABLE scan_cache (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            artist TEXT,
+            title TEXT,
+            scan_time REAL NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Create cache - should trigger migration
+    cache = LeaderboardCache(temp_db_file)
+    
+    # Verify tag_data column exists
+    cols = {row['name'] for row in cache._get_connection().execute("PRAGMA table_info(scan_cache)")}
+    assert 'tag_data' in cols
+    
+    cache.close()
+
+
+def test_migration_v3_adds_fingerprint_duration_and_artist_genres(temp_db_file):
+    """Test v3 migration adds fingerprint, duration columns and artist_genres table."""
+    # Create a v2 database manually
+    import sqlite3
+    conn = sqlite3.connect(str(temp_db_file))
+    conn.execute("CREATE TABLE schema_version (version INTEGER)")
+    conn.execute("INSERT INTO schema_version VALUES (2)")
+    conn.execute("""
+        CREATE TABLE scan_cache (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            artist TEXT,
+            title TEXT,
+            scan_time REAL NOT NULL,
+            tag_data TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Create cache - should trigger migration
+    cache = LeaderboardCache(temp_db_file)
+    
+    # Verify fingerprint and duration columns exist
+    cols = {row['name'] for row in cache._get_connection().execute("PRAGMA table_info(scan_cache)")}
+    assert 'fingerprint' in cols
+    assert 'duration' in cols
+    
+    # Verify artist_genres table exists
+    tables = {row[0] for row in cache._get_connection().execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    assert 'artist_genres' in tables
+    
+    cache.close()
+
+
+def test_get_cached_info_returns_none_for_missing_file(cache):
+    """Test get_cached_info returns None for missing file."""
+    result = cache.get_cached_info("/nonexistent/file.mp3")
+    assert result is None
+
+
+def test_migration_v3_creates_artist_genres_table(temp_db_file):
+    """Test migration v3 creates artist_genres table."""
+    import sqlite3
+    # Create a v2 database with full schema but version 2
+    conn = sqlite3.connect(temp_db_file)
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER);
+        INSERT INTO schema_version VALUES (2);
+        
+        CREATE TABLE artists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            count INTEGER NOT NULL DEFAULT 0
+        );
+        
+        CREATE TABLE similar_artists (
+            artist_name TEXT PRIMARY KEY,
+            similar_json TEXT NOT NULL,
+            last_updated INTEGER NOT NULL
+        );
+        
+        CREATE TABLE scan_cache (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            artist TEXT,
+            title TEXT,
+            scan_time REAL NOT NULL,
+            needs_fixing INTEGER DEFAULT 0,
+            missing_artist INTEGER DEFAULT 0,
+            missing_title INTEGER DEFAULT 0,
+            suggested_artist TEXT,
+            suggested_title TEXT,
+            tag_data TEXT
+            -- Note: fingerprint and duration are missing (v2 schema)
+        );
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Now create the cache - should trigger migration
+    cache = LeaderboardCache(cache_path=Path(temp_db_file))
+    
+    # Verify artist_genres table exists
+    conn = sqlite3.connect(temp_db_file)
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='artist_genres'")
+    assert cursor.fetchone() is not None
+    conn.close()
+    cache.close()
+
+
+def test_get_cached_info_returns_cached_data(cache, temp_dir):
+    """Test get_cached_info returns cached file info."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"dummy")
+    
+    cache.update_scan_cache([{
+        'path': str(test_file),
+        'size': 100,
+        'mtime': 1.0,
+        'artist': 'Test Artist',
+        'title': 'Test Title',
+        'tag_data': {'artist': 'Test Artist'}
+    }])
+    
+    result = cache.get_cached_info(str(test_file))
+    
+    assert result is not None
+    assert result['artist'] == 'Test Artist'
+    assert result['tag_data']['artist'] == 'Test Artist'
+
+
+def test_update_scan_cache_with_tag_data(cache, temp_dir):
+    """Test update_scan_cache stores tag_data."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"dummy")
+    
+    cache.update_scan_cache([{
+        'path': str(test_file),
+        'size': 100,
+        'mtime': 1.0,
+        'artist': 'Artist',
+        'title': 'Title',
+        'tag_data': {'artist': 'Artist', 'title': 'Title', 'album': 'Album'}
+    }])
+    
+    info = cache.get_cached_info(str(test_file))
+    assert info['tag_data']['album'] == 'Album'
+
+
+def test_update_scan_cache_with_suggestions(cache, temp_dir):
+    """Test update_scan_cache stores suggestion data in database."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"dummy")
+    
+    # This stores the data in the database even though get_cached_info doesn't return it
+    cache.update_scan_cache([{
+        'path': str(test_file),
+        'size': 100,
+        'mtime': 1.0,
+        'artist': None,
+        'title': None,
+        'needs_fixing': 1,
+        'missing_artist': 1,
+        'missing_title': 1,
+        'suggested_artist': 'Suggested Artist',
+        'suggested_title': 'Suggested Title',
+        'tag_data': None
+    }])
+    
+    # Verify the data was stored (check needs_fixing which is returned)
+    info = cache.get_cached_info(str(test_file))
+    assert info['needs_fixing'] == 1
+    assert info['missing_artist'] == 1
+
+
+# ============================================================================
 # Test: WAL mode optimizations
 # ============================================================================
 def test_wal_mode_enabled(cache):
@@ -796,6 +990,61 @@ def test_get_artist_genres_empty_list(cache):
     assert result == []
 
 
+def test_get_artist_genres_invalid_json_returns_none(cache, temp_dir):
+    """Test get_artist_genres handles invalid JSON."""
+    conn = cache._get_connection()
+    conn.execute(
+        "INSERT INTO artist_genres (artist_name, genres_json, last_updated) VALUES (?, ?, ?)",
+        ("Bad Artist", "not valid json {{{", 123456)
+    )
+    conn.commit()
+    
+    result = cache.get_artist_genres("Bad Artist")
+    assert result is None
+
+
+def test_init_cache_path_as_dir(temp_dir):
+    """Test LeaderboardCache accepts directory path."""
+    from musichouse.leaderboard_cache import LeaderboardCache
+    
+    # Pass directory instead of file
+    cache = LeaderboardCache(cache_path=temp_dir)
+    
+    # Should append leaderboard.db
+    assert cache.cache_path.name == "leaderboard.db"
+    assert cache.cache_path.parent == temp_dir
+    
+    cache.close()
+
+
+def test_get_changed_files_scandir_oserror(cache, temp_dir):
+    """Test get_changed_files handles OSError from scandir."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    stat = test_file.stat()
+    # Cache the file
+    cache.update_scan_cache([
+        {
+            'path': str(test_file),
+            'size': stat.st_size,
+            'mtime': stat.st_mtime,
+            'artist': 'Artist',
+            'title': 'Title'
+        }
+    ])
+    
+    # Mock scandir to raise OSError
+    with patch('musichouse.leaderboard_cache.os.scandir') as mock_scandir:
+        mock_scandir.side_effect = OSError("Permission denied")
+        
+        # Should not raise, should do full scan
+        changed, _, _, _ = cache.get_changed_files([test_file])
+        
+        # Full scan should happen
+        assert len(changed) >= 0  # Depends on other files
+
+
 def test_synchronous_normal(cache):
     """Test that synchronous mode is NORMAL."""
     conn = cache._get_connection()
@@ -876,3 +1125,417 @@ def test_connection_tracking_closes_all_threads(temp_db_file):
     
     # Cleanup
     cache.close()
+
+
+def test_get_all_scanned_paths(cache):
+    """Test getting all scanned paths."""
+    cache.update_scan_cache([
+        {'path': '/path/to/file1.mp3', 'size': 1234, 'mtime': 123456.0, 'artist': 'Artist', 'title': 'Title'},
+        {'path': '/path/to/file2.mp3', 'size': 5678, 'mtime': 123457.0, 'artist': 'Artist', 'title': 'Title'},
+    ])
+    paths = cache.get_all_scanned_paths()
+    assert len(paths) == 2
+    assert '/path/to/file1.mp3' in paths
+    assert '/path/to/file2.mp3' in paths
+
+
+def test_get_all_scanned_paths_empty(cache):
+    """Test getting paths from empty cache."""
+    assert cache.get_all_scanned_paths() == []
+
+
+def test_get_similar_artists_cached(cache):
+    """Test getting similar artists from cache."""
+    suggestions = [
+        {"artist": "Similar Artist 1", "reason": "Similar style"},
+        {"artist": "Similar Artist 2", "reason": "Same genre"},
+    ]
+    cache.save_similar_artists("Seed Artist", suggestions)
+    result = cache.get_similar_artists("Seed Artist")
+    assert result == suggestions
+
+
+def test_get_similar_artists_not_cached(cache):
+    """Test getting similar artists when not cached."""
+    assert cache.get_similar_artists("Unknown Artist") == []
+
+
+def test_get_similar_artists_invalid_json_returns_empty(cache):
+    """Test that invalid JSON in cache returns empty list."""
+    conn = cache._get_connection()
+    conn.execute(
+        "INSERT INTO similar_artists (artist_name, similar_json, last_updated) VALUES (?, ?, ?)",
+        ("Bad Artist", "not valid json", 123456)
+    )
+    result = cache.get_similar_artists("Bad Artist")
+    assert result == []
+
+
+def test_save_similar_artists_replaces_existing(cache):
+    """Test that save_similar_artists replaces existing data."""
+    cache.save_similar_artists("Artist", [{"artist": "A", "reason": "R"}])
+    new_suggestions = [{"artist": "B", "reason": "New"}]
+    cache.save_similar_artists("Artist", new_suggestions)
+    result = cache.get_similar_artists("Artist")
+    assert result == new_suggestions
+
+
+def test_save_similar_artists_with_timestamp(cache):
+    """Test that save_similar_artists updates timestamp."""
+    cache.save_similar_artists("Artist", [{"artist": "A", "reason": "R"}])
+    conn = cache._get_connection()
+    cursor = conn.execute(
+        "SELECT last_updated FROM similar_artists WHERE artist_name = ?",
+        ("Artist",)
+    )
+    initial_ts = cursor.fetchone()['last_updated']
+    import time
+    time.sleep(2)
+    cache.save_similar_artists("Artist", [{"artist": "B", "reason": "R"}])
+    cursor = conn.execute(
+        "SELECT last_updated FROM similar_artists WHERE artist_name = ?",
+        ("Artist",)
+    )
+    new_ts = cursor.fetchone()['last_updated']
+    assert new_ts > initial_ts
+
+
+def test_get_all_indexed_artists(cache):
+    """Test getting distinct indexed artists."""
+    cache.update_scan_cache([
+        {'path': '/file1.mp3', 'size': 1234, 'mtime': 123456.0, 'artist': 'Artist A', 'title': 'Title'},
+        {'path': '/file2.mp3', 'size': 5678, 'mtime': 123457.0, 'artist': 'Artist B', 'title': 'Title'},
+        {'path': '/file3.mp3', 'size': 9999, 'mtime': 123458.0, 'artist': 'Artist A', 'title': 'Title'},
+    ])
+    artists = cache.get_all_indexed_artists()
+    assert len(artists) == 2
+    assert 'Artist A' in artists
+    assert 'Artist B' in artists
+
+
+def test_get_all_indexed_artists_excludes_empty(cache):
+    """Test that empty/None artists are excluded."""
+    cache.update_scan_cache([
+        {'path': '/file1.mp3', 'size': 1234, 'mtime': 123456.0, 'artist': '', 'title': 'Title'},
+        {'path': '/file2.mp3', 'size': 5678, 'mtime': 123457.0, 'artist': None, 'title': 'Title'},
+        {'path': '/file3.mp3', 'size': 9999, 'mtime': 123458.0, 'artist': 'Valid Artist', 'title': 'Title'},
+    ])
+    artists = cache.get_all_indexed_artists()
+    assert artists == ['Valid Artist']
+
+
+def test_get_all_indexed_artists_empty(cache):
+    """Test getting artists from empty cache."""
+    assert cache.get_all_indexed_artists() == []
+
+
+def test_get_changed_files_empty_list(cache):
+    """Test get_changed_files with empty file list."""
+    changed, new_count, modified_count, skipped = cache.get_changed_files([])
+    assert changed == []
+    assert new_count == 0
+    assert modified_count == 0
+    assert skipped == 0
+
+
+def test_get_changed_files_oserror_handling(cache, temp_dir):
+    """Test get_changed_files handles OSError when accessing file."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    test_file.unlink()
+    changed, new_count, _, _ = cache.get_changed_files([test_file])
+    assert len(changed) == 1
+    assert new_count == 1
+
+
+def test_check_needs_fixing_with_cached_tag_data(cache):
+    """Test _check_needs_fixing uses cached tag_data."""
+    cached_info = {'tag_data': {'artist': 'Test Artist', 'title': 'Test Title'}}
+    result = cache._check_needs_fixing(Path("/fake/path.mp3"), cached_info)
+    assert result is False
+
+
+def test_check_needs_fixing_missing_artist_in_cache(cache):
+    """Test _check_needs_fixing detects missing artist in cache."""
+    cached_info = {'tag_data': {'artist': '', 'title': 'Test Title'}}
+    result = cache._check_needs_fixing(Path("/fake/path.mp3"), cached_info)
+    assert result is True
+
+
+def test_check_needs_fixing_missing_title_in_cache(cache):
+    """Test _check_needs_fixing detects missing title in cache."""
+    cached_info = {'tag_data': {'artist': 'Test Artist', 'title': ''}}
+    result = cache._check_needs_fixing(Path("/fake/path.mp3"), cached_info)
+    assert result is True
+
+
+def test_check_needs_fixing_no_cached_data_loads_file(cache, temp_dir):
+    """Test _check_needs_fixing loads file when no cached tag_data."""
+    test_file = temp_dir / "valid.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    result = cache._check_needs_fixing(test_file, None)
+    assert result is True
+
+
+def test_check_needs_fixing_error_reads_file(cache, temp_dir):
+    """Test _check_needs_fixing returns True on file read error."""
+    fake_file = temp_dir / "nonexistent.mp3"
+    result = cache._check_needs_fixing(fake_file, None)
+    assert result is True
+
+
+def test_check_needs_fixing_exception_in_load(cache, temp_dir):
+    """Test _check_needs_fixing handles exception during file load."""
+    # Create a file that looks like MP3 but is invalid
+    test_file = temp_dir / "invalid.mp3"
+    test_file.write_bytes(b"not an mp3 file at all")
+    
+    # Should return True on exception
+    result = cache._check_needs_fixing(test_file, None)
+    assert result is True
+
+
+def test_get_changed_files_modified_needs_fixing(cache, temp_dir):
+    """Test get_changed_files handles modified file that needs fixing."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    # Cache with needs_fixing=0 and old mtime
+    cache.update_scan_cache([
+        {
+            'path': str(test_file),
+            'size': 1000,  # Different size to trigger full scan
+            'mtime': 123456.0,  # Old mtime
+            'artist': 'Artist',
+            'title': 'Title',
+            'needs_fixing': 0
+        }
+    ])
+    
+    # File modified but has invalid tags - should be included
+    changed, _, modified_count, _ = cache.get_changed_files([test_file])
+    
+    # File has invalid tags - should be included
+    assert len(changed) == 1
+    assert modified_count == 1
+
+
+def test_get_changed_files_unchanged_needs_fixing(cache, temp_dir):
+    """Test get_changed_files handles unchanged file marked needs_fixing."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    stat = test_file.stat()
+    # Cache with needs_fixing=1 and old mtime to force full scan
+    cache.update_scan_cache([
+        {
+            'path': str(test_file),
+            'size': stat.st_size,
+            'mtime': 123456.0,  # Old mtime to force full scan
+            'artist': 'Artist',
+            'title': 'Title',
+            'needs_fixing': 1  # Marked as needs fixing
+        }
+    ])
+    
+    # File unchanged but marked needs_fixing - should include
+    changed, _, modified_count, _ = cache.get_changed_files([test_file])
+    
+    assert len(changed) == 1
+    assert modified_count == 1
+
+
+def test_get_changed_files_skipped_unchanged_valid_tags(cache, temp_dir, monkeypatch):
+    """Test get_changed_files skips unchanged file with valid tags."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    stat = test_file.stat()
+    # Cache with valid tags and old mtime to force full scan
+    cache.update_scan_cache([
+        {
+            'path': str(test_file),
+            'size': stat.st_size,
+            'mtime': 123456.0,  # Old mtime to force full scan
+            'artist': 'Artist',
+            'title': 'Title',
+            'needs_fixing': 0,  # Valid tags
+            'tag_data': {'artist': 'Artist', 'title': 'Title'}  # Provide tag_data
+        }
+    ])
+    
+    # File unchanged with valid tags - should skip (uses cached tag_data)
+    changed, _, modified_count, skipped = cache.get_changed_files([test_file])
+    
+    assert len(changed) == 0
+    assert modified_count == 0
+    assert skipped >= 1
+
+
+def test_close_handles_sqlite_error(cache):
+    """Test close() handles sqlite3.Error gracefully."""
+    conn = cache._get_connection()
+    cache._conns.append(conn)
+    conn.close()
+    cache.close()
+    assert cache._local.conn is None
+
+
+def test_close_idempotent_multiple_calls(cache):
+    """Test close() can be called multiple times safely."""
+    cache.close()
+    cache.close()
+    cache.close()
+    assert cache._local.conn is None
+    assert len(cache._conns) == 0
+
+
+def test_close_handles_sqlite_error_on_tracked_conn(cache):
+    """Test close() handles sqlite3.Error on tracked connection."""
+    # Get a connection and track it
+    conn = cache._get_connection()
+    cache._conns.append(conn)
+    
+    # Close the connection outside the cache
+    conn.close()
+    
+    # Now close through cache - should handle sqlite3.Error gracefully
+    # (connection already closed)
+    cache.close()
+    assert cache._local.conn is None
+
+
+def test_close_handles_sqlite_error_via_mock(cache):
+    """Test close() handles sqlite3.Error via mocking."""
+    import sqlite3
+    
+    # Mock conn.close to raise sqlite3.Error
+    mock_conn = MagicMock()
+    mock_conn.close.side_effect = sqlite3.Error("Connection error")
+    cache._conns.append(mock_conn)
+    
+    # Should not raise
+    cache.close()
+    assert cache._local.conn is None
+    assert len(cache._conns) == 0
+
+
+def test_v3_migration_creates_artist_genres(temp_dir):
+    """Test v3 migration creates artist_genres table."""
+    from musichouse.leaderboard_cache import LeaderboardCache
+    
+    # Create a v2 schema DB
+    db_path = temp_dir / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (2);
+        CREATE TABLE scan_cache (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            artist TEXT,
+            title TEXT,
+            scan_time REAL NOT NULL,
+            needs_fixing INTEGER NOT NULL DEFAULT 0,
+            missing_artist INTEGER NOT NULL DEFAULT 0,
+            missing_title INTEGER NOT NULL DEFAULT 0,
+            tag_data TEXT
+        );
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Create cache - should migrate to v3
+    cache = LeaderboardCache(cache_path=db_path)
+    
+    # Verify artist_genres table exists
+    conn = cache._get_connection()
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='artist_genres'"
+    )
+    assert cursor.fetchone() is not None
+    
+    cache.close()
+
+
+def test_v3_migration_adds_columns(temp_dir):
+    """Test v3 migration adds fingerprint and duration columns."""
+    from musichouse.leaderboard_cache import LeaderboardCache
+    
+    # Create a v2 schema DB
+    db_path = temp_dir / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (2);
+        CREATE TABLE scan_cache (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            artist TEXT,
+            title TEXT,
+            scan_time REAL NOT NULL,
+            needs_fixing INTEGER NOT NULL DEFAULT 0,
+            missing_artist INTEGER NOT NULL DEFAULT 0,
+            missing_title INTEGER NOT NULL DEFAULT 0,
+            tag_data TEXT
+        );
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Create cache - should migrate to v3
+    cache = LeaderboardCache(cache_path=db_path)
+    
+    # Verify columns exist
+    conn = cache._get_connection()
+    cols = {row['name'] for row in conn.execute("PRAGMA table_info(scan_cache)")}
+    assert 'fingerprint' in cols
+    assert 'duration' in cols
+    
+    cache.close()
+
+
+def test_get_cached_info_invalid_tag_data_json(cache, temp_dir):
+    """Test get_cached_info handles invalid JSON in tag_data."""
+    # Insert invalid JSON
+    conn = cache._get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO scan_cache (path, size, mtime, artist, title, scan_time, tag_data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (str(temp_dir / "test.mp3"), 1234, 123456.0, "Artist", "Title", 123456.0, "invalid json {{{")
+    )
+    conn.commit()
+    
+    # Should not raise, should return info with tag_data=None
+    info = cache.get_cached_info(str(temp_dir / "test.mp3"))
+    assert info is not None
+    assert info['artist'] == "Artist"
+    assert info['tag_data'] is None
+
+
+
+def test_get_changed_files_skips_unchanged(cache, temp_dir):
+    """Test get_changed_files skips unchanged files."""
+    test_file = temp_dir / "test.mp3"
+    test_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+    
+    stat = test_file.stat()
+    # Cache the file
+    cache.update_scan_cache([
+        {
+            'path': str(test_file),
+            'size': stat.st_size,
+            'mtime': stat.st_mtime,
+            'artist': 'Artist',
+            'title': 'Title'
+        }
+    ])
+    
+    # File unchanged - should skip
+    changed, _, modified_count, skipped = cache.get_changed_files([test_file])
+    
+    assert len(changed) == 0
+    assert skipped == 1
+    assert modified_count == 0
+

@@ -4,8 +4,12 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from musichouse import log_setup
 from musichouse.ui.main_window import MainWindow
 from musichouse.utils.lock import SingleInstanceLock
+
+# Configure third-party loggers early to suppress noise
+log_setup.configure_third_party_loggers()
 
 
 def main() -> int:

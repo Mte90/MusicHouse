@@ -51,6 +51,8 @@ class FingerprintWorker(QThread):
             return
         
         paths = self._cache.get_all_scanned_paths()
+        total_paths = len(paths)
+        _batch_progress_count = 0
         
         for path_str in paths:
             if self._stop_flag:
@@ -70,8 +72,14 @@ class FingerprintWorker(QThread):
                 fingerprint_bytes, duration = compute_fingerprint(path_str)
                 self._cache.set_fingerprint(path_str, fingerprint_bytes, duration)
                 self._fingerprinted_count += 1
+                _batch_progress_count += 1
                 self.file_done.emit(self._fingerprinted_count)
-                logger.info(f"Fingerprinted: {path.name} ({duration:.1f}s)")
+                
+                # Log progress every 50 files
+                if _batch_progress_count % 50 == 0:
+                    logger.info(f"Fingerprinted {_batch_progress_count}/{total_paths}")
+                
+                logger.debug(f"Fingerprinted: {path.name} ({duration:.1f}s)")
             except FingerprintError as e:
                 self.progress.emit(f"Error fingerprinting {path.name}: {e}")
                 logger.warning(f"Failed to fingerprint {path.name}: {e}")

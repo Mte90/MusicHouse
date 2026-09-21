@@ -2,12 +2,14 @@
 
 import base64
 import json
+import logging
 import shutil
 import struct
 import subprocess
 from pathlib import Path
 
 FPCALC_AVAILABLE: bool | None = None
+logger = logging.getLogger(__name__)
 
 
 class FingerprintError(Exception):
@@ -61,13 +63,36 @@ def compute_fingerprint(path: str | Path) -> tuple[bytes, float]:
     return (fingerprint_bytes, duration)
 
 
+def _is_valid_fingerprint(fp: bytes) -> bool:
+    """Return True if fingerprint is non-empty and has valid length (multiple of 4)."""
+    if len(fp) == 0:
+        return True  # Empty is valid (handled by returning 0/sentinel)
+    return len(fp) % 4 == 0
+
+
 def hamming_distance(fp1: bytes, fp2: bytes) -> int:
     """
     Compute hamming distance between two raw fingerprint byte blobs.
     
     Aligns to shorter length. Interprets bytes as 32-bit uint array (little-endian).
     Returns total differing bit count.
+    
+    If either fingerprint is malformed (non-empty but length not multiple of 4),
+    returns a large sentinel distance (10**9) and logs a warning.
+    Empty fingerprints return 0 (no warning).
     """
+    # Empty fingerprints are valid - return 0
+    if not fp1 or not fp2:
+        return 0
+    
+    # Non-empty but invalid length is malformed
+    if len(fp1) % 4 != 0:
+        logger.warning(f"Malformed fingerprint in hamming_distance: len={len(fp1)}")
+        return 10**9
+    if len(fp2) % 4 != 0:
+        logger.warning(f"Malformed fingerprint in hamming_distance: len={len(fp2)}")
+        return 10**9
+
     # Unpack both fingerprints as uint32 arrays (little-endian)
     values1 = list(struct.iter_unpack("<I", fp1))
     values2 = list(struct.iter_unpack("<I", fp2))
@@ -96,9 +121,18 @@ def similarity_percent(fp1: bytes, fp2: bytes) -> float:
     Return 0.0-100.0 similarity percentage.
     
     = 100 * (1 - hamming_distance / (32 * aligned_uint32_count))
-    Returns 0.0 if either fingerprint is empty.
+    Returns 0.0 if either fingerprint is empty or malformed.
     """
+    # Empty fingerprints are valid - return 0
     if not fp1 or not fp2:
+        return 0.0
+    
+    # Non-empty but invalid length is malformed
+    if len(fp1) % 4 != 0:
+        logger.warning(f"Malformed fingerprint in similarity_percent: len={len(fp1)}")
+        return 0.0
+    if len(fp2) % 4 != 0:
+        logger.warning(f"Malformed fingerprint in similarity_percent: len={len(fp2)}")
         return 0.0
 
     # Unpack both fingerprints as uint32 arrays (little-endian)

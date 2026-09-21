@@ -383,6 +383,28 @@ def test_set_ui_busy_updates_buttons(duplicates_tab):
     assert duplicates_tab._find_dup_btn.isEnabled() is True
 
 
+def test_find_duplicates_exception_handled(qapp, mock_cache):
+    """Test that find_duplicates raising an exception shows error, no crash."""
+    # Patch find_duplicates to raise an exception
+    with patch('musichouse.ui.duplicates_tab.find_duplicates', side_effect=Exception("Test error")):
+        tab = DuplicatesTab(mock_cache)
+        
+        # Patch QMessageBox to capture the call
+        with patch('musichouse.ui.duplicates_tab.QMessageBox.critical') as mock_dialog:
+            tab._find_duplicates()
+            
+            # QMessageBox should have been called to show the error
+            mock_dialog.assert_called_once()
+            # Status label should show error message
+            assert "Error" in tab._status_label.text()
+            # Progress bar should be hidden
+            assert not tab._progress_bar.isVisible()
+            # UI should not be busy
+            assert tab._find_dup_btn.isEnabled() is True
+        
+        tab.deleteLater()
+
+
 def test_on_find_clicked_with_fpcalc_calls_fingerprinting(qapp, mock_cache):
     """Test that clicking find with fpcalc available starts fingerprinting."""
     with patch('musichouse.ui.duplicates_tab.is_fpcalc_available', return_value=True):

@@ -50,6 +50,126 @@ class TestFingerprintWorker:
         
         cache.close()
 
+    def test_run_batch_progress_logging(self, temp_dir, qapp, caplog):
+        """Test that batch progress logging emits INFO every 50 files."""
+        import logging
+        
+        # Create 60 mock MP3 files (to test 50-file boundary and final partial)
+        mp3_files = []
+        for i in range(60):
+            mp3_file = temp_dir / f"Artist - Title {i}.mp3"
+            mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+            mp3_files.append(mp3_file)
+        
+        # Create cache and add files without fingerprints
+        cache = LeaderboardCache(temp_dir / "test.db")
+        from musichouse.scanner import MP3Scanner
+        scanner = MP3Scanner(temp_dir)
+        paths = scanner.scan()
+        cache.update_scan_cache([
+            {
+                "path": str(p),
+                "size": p.stat().st_size,
+                "mtime": p.stat().st_mtime,
+                "artist": "Artist",
+                "title": f"Title {i}",
+                "needs_fixing": 0,
+                "missing_artist": 0,
+                "missing_title": 0,
+                "suggested_artist": None,
+                "suggested_title": None,
+                "tag_data": None,
+            }
+            for i, p in enumerate(paths)
+        ])
+        
+        mock_fingerprint = (b"mock_fingerprint_data", 180.0)
+        
+        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True), \
+             patch("musichouse.ui.fingerprint_worker.compute_fingerprint", return_value=mock_fingerprint):
+            worker = FingerprintWorker(cache)
+            worker.run()
+        
+        # Check INFO level logs
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        info_messages = [r.message for r in info_records]
+        
+        # Should have batch progress at 50 and final summary
+        assert any("Fingerprinted 50/60" in msg for msg in info_messages), \
+            f"Expected batch progress at 50, got: {info_messages}"
+        assert any("FingerprintWorker completed: 60 files fingerprinted" in msg for msg in info_messages), \
+            f"Expected final summary, got: {info_messages}"
+        
+        # Check DEBUG level logs - per-file fingerprinted messages should be DEBUG
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        debug_messages = [r.message for r in debug_records]
+        
+        # Should have per-file fingerprinted messages at DEBUG
+        assert any("Fingerprinted:" in msg for msg in debug_messages), \
+            f"Expected per-file DEBUG logs, got debug: {debug_messages}"
+        
+        # Should have no per-file INFO logs (only batch and summary)
+        per_file_info = [msg for msg in info_messages if msg.startswith("Fingerprinted:")]
+        assert len(per_file_info) == 0, f"Per-file logs should be DEBUG, not INFO: {per_file_info}"
+        
+        cache.close()
+
+    def test_run_batch_logging_with_non_multiple_of_50(self, temp_dir, qapp, caplog):
+        """Test batch logging with file count that is not a multiple of 50 (e.g., 73)."""
+        import logging
+        
+        # Create 73 mock MP3 files
+        mp3_files = []
+        for i in range(73):
+            mp3_file = temp_dir / f"Artist - Title {i}.mp3"
+            mp3_file.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+            mp3_files.append(mp3_file)
+        
+        # Create cache and add files without fingerprints
+        cache = LeaderboardCache(temp_dir / "test.db")
+        from musichouse.scanner import MP3Scanner
+        scanner = MP3Scanner(temp_dir)
+        paths = scanner.scan()
+        cache.update_scan_cache([
+            {
+                "path": str(p),
+                "size": p.stat().st_size,
+                "mtime": p.stat().st_mtime,
+                "artist": "Artist",
+                "title": f"Title {i}",
+                "needs_fixing": 0,
+                "missing_artist": 0,
+                "missing_title": 0,
+                "suggested_artist": None,
+                "suggested_title": None,
+                "tag_data": None,
+            }
+            for i, p in enumerate(paths)
+        ])
+        
+        mock_fingerprint = (b"mock_fingerprint_data", 180.0)
+        
+        with patch("musichouse.ui.fingerprint_worker.is_fpcalc_available", return_value=True), \
+             patch("musichouse.ui.fingerprint_worker.compute_fingerprint", return_value=mock_fingerprint):
+            worker = FingerprintWorker(cache)
+            worker.run()
+        
+        # Check INFO level logs
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        info_messages = [r.message for r in info_records]
+        
+        # Should have batch progress at 50 and final summary (no progress at 100 since only 73 files)
+        assert any("Fingerprinted 50/73" in msg for msg in info_messages), \
+            f"Expected batch progress at 50, got: {info_messages}"
+        assert any("FingerprintWorker completed: 73 files fingerprinted" in msg for msg in info_messages), \
+            f"Expected final summary, got: {info_messages}"
+        
+        # No progress at 100
+        assert not any("Fingerprinted 100/" in msg for msg in info_messages), \
+            f"Should not have progress at 100, got: {info_messages}"
+        
+        cache.close()
+
     def test_run_fingerprintes_missing_files(self, temp_dir, qapp):
         """Test that FingerprintWorker fingerprints files missing fingerprints."""
         # Create mock MP3 files

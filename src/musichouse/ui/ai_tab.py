@@ -4,6 +4,7 @@
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -15,6 +16,8 @@ from PyQt6.QtWidgets import (
 from musichouse import log_setup as logging
 from musichouse.ai_client import AIClient
 from musichouse.ui.ai_worker import AIWorker
+from musichouse.ui.artist_select_dialog import ArtistSelectDialog
+from musichouse.ui.suggest_worker import SuggestWorker
 
 logger = logging.get_logger(__name__)
 
@@ -36,6 +39,7 @@ class AITab(QWidget):
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._refresh_artist_combo)
         self._empty_label: QLabel | None = None
+        self._load_attempted = False  # Track if load_artists_from_db was called
         self._setup_ui()
 
     def _setup_ui(self):
@@ -57,10 +61,17 @@ class AITab(QWidget):
         self._layout.addWidget(self._artist_combo)
 
         self._artist_count_label = QLabel("0 artists available")
-        self._artist_count_label.setStyleSheet("font-size: 10px; color: #666;")
-        self._layout.addWidget(self._artist_count_label)
-
         # Get suggestions button
+        self._get_suggestions_button = QPushButton("Get Similar Artists")
+        self._get_suggestions_button.clicked.connect(self._get_similar_artists)
+        self._layout.addWidget(self._get_suggestions_button)
+
+        # Suggest artists button
+        self._suggest_artists_button = QPushButton("Suggest artists for me")
+        self._suggest_artists_button.clicked.connect(self._suggest_artists_flow)
+        self._layout.addWidget(self._suggest_artists_button)
+
+        # Cancel button
         self._get_suggestions_button = QPushButton("Get Similar Artists")
         self._get_suggestions_button.clicked.connect(self._get_similar_artists)
         self._layout.addWidget(self._get_suggestions_button)
@@ -131,10 +142,10 @@ class AITab(QWidget):
         self._artist_count_label.setText(f"{len(filtered)} artists found")
         
         # Update empty state based on whether any artists are available
-        self._update_empty_state(len(filtered) == 0)
+        self._update_empty_state(len(filtered) > 0)
     
     def _update_empty_state(self, has_data: bool) -> None:
-        """Show/hide empty state label."""
+        """Show the empty-state label only when there is NO data."""
         if self._empty_label:
             self._empty_label.setVisible(not has_data)
 
@@ -154,8 +165,12 @@ class AITab(QWidget):
         self._ai_client = AIClient()
         logger.info(f"New client configured: endpoint={self._ai_client.endpoint}, model={self._ai_client.model}")
 
-    def load_artists_from_db(self) -> bool:
-        """Load artists from database. Return True if artists were found."""
+    def load_artists_from_db(self, show_empty_state: bool = True) -> bool:
+        """Load artists from database. Return True if artists were found.
+        
+        Args:
+            show_empty_state: If False, don't update empty label visibility (for first show).
+        """
         if self._artists_loaded:
             return True
 
@@ -169,22 +184,32 @@ class AITab(QWidget):
 
             if artists:
                 self.load_artists(artists)
-                self._update_empty_state(False)
+                self._update_empty_state(True)
                 self._artists_loaded = True
                 return True
             else:
                 # No artists found - don't mark as loaded, allow retry
-                self._update_empty_state(True)
+                if show_empty_state:
+                    self._update_empty_state(False)
                 return False
         except Exception as e:  # noqa: BLE001
             logger.error(f"Error loading artists from DB: {e}")
-            self._update_empty_state(True)
+            if show_empty_state:
+                self._update_empty_state(False)
             return False
     def showEvent(self, event):
         """Load artists on first show, retry if previously empty."""
         super().showEvent(event)
-        if not self._artists_loaded:
-            self.load_artists_from_db()  # Will retry if DB was empty
+        if not self._artists_loaded and not self._load_attempted:
+            # First show: load but don't show empty label yet
+            self._load_attempted = True
+            self.load_artists_from_db(show_empty_state=False)  # Don't show on first attempt
+        elif not self._artists_loaded and self._load_attempted:
+            # Retry load if previously failed - now show empty state if still no data
+            self._update_empty_state(False)  # Hide before retry
+            result = self.load_artists_from_db(show_empty_state=True)
+            if not result and not self._all_artists:
+                self._update_empty_state(False)
 
     def _get_similar_artists(self):
         """Get similar artists for selected artist using background worker."""
@@ -265,6 +290,136 @@ class AITab(QWidget):
         self._set_loading_state(False)
         self._suggestions_display.setText(user_msg)
         self._genre_label.setText("Genres: Error")
+    def _suggest_artists_flow(self):
+        """Flow for suggesting artists based on multiple seed artists."""
+        if not self._artists_loaded and not self.load_artists_from_db():
+            self._suggestions_display.setText("No artists available in library to use as seeds.")
+            return
+
+        # 1. Artist Selection Dialog
+        from musichouse import config
+        from musichouse.leaderboard_cache import LeaderboardCache
+        
+        cache = LeaderboardCache(config.get_config_dir())
+        artists_with_counts = cache.get_all_artists()
+        cache.close()
+        
+        dialog = ArtistSelectDialog(artists_with_counts, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+            
+        seeds = dialog.get_selected_artists()
+        if not seeds:
+            return
+
+        # 2. Handle caching and worker
+        self._set_loading_state(True)
+        self._suggestions_display.clear()
+        
+        # Track results: { seed: [ {artist, reason}, ... ] }
+        self._current_suggestions: dict[str, list[dict]] = {}
+        self._remaining_seeds = list(seeds)
+        
+        # We use a separate cache instance for the actual suggestions loop
+        self._suggestion_cache = LeaderboardCache(config.get_config_dir())
+        
+        # Start the processing loop
+        self._process_next_seed()
+
+    def _process_next_seed(self):
+        """Process seeds one by one: check cache, then worker."""
+        if not self._remaining_seeds:
+            self._finalize_suggestions()
+            return
+            
+        seed = self._remaining_seeds.pop(0)
+        
+        # Check cache first
+        cached = self._suggestion_cache.get_similar_artists(seed)
+        if cached:
+            logger.info(f"Cache hit for seed: {seed}")
+            self._handle_seed_result(seed, cached)
+            # Immediately process next
+            self._process_next_seed()
+        else:
+            logger.info(f"Cache miss for seed: {seed}. Starting worker...")
+            # Use SuggestWorker for a single seed (or we could use SuggestWorker for all, 
+            # but the contract says SuggestWorker takes seeds: list[str]. 
+            # Let's use it for all remaining seeds + the current one to be efficient, 
+            # but we must manage the state).
+            
+            # Actually, the contract says SuggestWorker(seeds: list[str], ai_client) 
+            # and emits seed_result(str, list). Let's just start it once for all seeds.
+            
+            # Re-evaluating: If some are cached, we only need the worker for the non-cached ones.
+            non_cached_seeds = [seed] + self._remaining_seeds
+            self._remaining_seeds = [] # Worker will handle the rest
+            
+            self._worker = SuggestWorker(non_cached_seeds, self._get_ai_client())
+            self._worker.progress.connect(self._on_suggest_progress)
+            self._worker.seed_result.connect(self._on_suggest_seed_result)
+            self._worker.error.connect(self._on_suggest_error)
+            self._worker.finished.connect(self._on_suggest_finished)
+            self._worker.start()
+
+    def _on_suggest_progress(self, message: str):
+        self._suggestions_display.append(f"Processing: {message}...")
+
+    def _on_suggest_seed_result(self, seed: str, results: list[dict]):
+        # results is list of {"artist": str, "reason": str}
+        self._handle_seed_result(seed, results)
+
+    def _handle_seed_result(self, seed: str, results: list[dict]):
+        # Filter out artists already in library and the seeds themselves
+        from musichouse import config
+        from musichouse.leaderboard_cache import LeaderboardCache
+        
+        # Get current indexed artists to filter
+        temp_cache = LeaderboardCache(config.get_config_dir())
+        indexed_artists = temp_cache.get_all_indexed_artists()
+        temp_cache.close()
+        
+        filtered = [
+            r for r in results 
+            if r["artist"] not in indexed_artists and r["artist"] != seed
+        ]
+        
+        if filtered:
+            self._current_suggestions[seed] = filtered
+            # Save raw suggestions to cache (as per contract, cache stores raw, filtering at display)
+            # Wait, contract says: save_similar_artists(seed, filtered_suggestions)
+            # Let's follow the contract exactly.
+            self._suggestion_cache.save_similar_artists(seed, filtered)
+        
+    def _on_suggest_finished(self):
+        self._finalize_suggestions()
+
+    def _finalize_suggestions(self):
+        self._set_loading_state(False)
+        if not self._current_suggestions:
+            self._suggestions_display.setText("No new suggestions — all similar artists are already in your library.")
+            return
+            
+        # Display grouped results
+        output = []
+        for seed, results in self._current_suggestions.items():
+            output.append(f"Because you listen to {seed}:")
+            for r in results:
+                output.append(f"  • {r['artist']}: {r['reason']}")
+            output.append("") # Spacer
+            
+        self._suggestions_display.setText("\n".join(output))
+        
+        if hasattr(self, '_suggestion_cache'):
+            self._suggestion_cache.close()
+
+    def _on_suggest_error(self, error_msg: str):
+        """Handle error for suggest artists flow."""
+        # Reuse existing _on_worker_error logic
+        self._on_worker_error(error_msg)
+        if hasattr(self, '_suggestion_cache'):
+            self._suggestion_cache.close()
+        self._genre_label.setText("Genres: Error")
 
     def _cancel_request(self):
         """Cancel the current worker request."""
@@ -273,3 +428,5 @@ class AITab(QWidget):
             self._worker.stop()
             self._set_loading_state(False)
             self._suggestions_display.append("Request cancelled.")
+            if hasattr(self, '_suggestion_cache'):
+                self._suggestion_cache.close()

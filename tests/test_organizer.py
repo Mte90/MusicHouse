@@ -462,3 +462,55 @@ def test_non_mp3_files_ignored(organizer_cache, temp_dir):
     info = results[0]
     assert info.file_count == 1  # Only MP3 counted
     assert info.artists == ["Metallica"]
+
+
+# ============================================================================
+# Test: permission error handling
+# ============================================================================
+def test_permission_error_handling(organizer_cache, temp_dir, monkeypatch):
+    """Test that analysis continues when a subdirectory raises PermissionError."""
+    import os
+
+    # Create structure: temp_dir/Metallica/track1.mp3, Unreadable/
+    metallica_dir = temp_dir / "Metallica"
+    unreadable_dir = temp_dir / "Unreadable"
+    metallica_dir.mkdir()
+    unreadable_dir.mkdir()
+
+    track1 = metallica_dir / "track1.mp3"
+    track1.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 100)
+
+    # Cache the readable file
+    organizer_cache.update_scan_cache([
+        {
+            'path': str(track1),
+            'size': 100,
+            'mtime': 123456.0,
+            'artist': 'Metallica',
+            'title': 'Track 1'
+        }
+    ])
+
+    # Monkeypatch os.scandir to raise PermissionError for the unreadable directory
+    original_scandir = os.scandir
+
+    def mock_scandir(path, *args, **kwargs):
+        path_str = str(path)
+        if "Unreadable" in path_str:
+            raise PermissionError(f"Permission denied: {path_str}")
+        return original_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'scandir', mock_scandir)
+
+    # Analyze - should not raise, should return results for readable parts
+    results = analyze_folder_structure(temp_dir, organizer_cache)
+
+    # Should find the Metallica folder
+    metallica_folder = next((r for r in results if r.path.name == "Metallica"), None)
+    assert metallica_folder is not None
+    assert metallica_folder.folder_type == FolderType.CORRECT_ARTIST
+    assert metallica_folder.file_count == 1
+
+    # Should NOT include the Unreadable directory in results
+    unreadable_folder = next((r for r in results if r.path.name == "Unreadable"), None)
+    assert unreadable_folder is None

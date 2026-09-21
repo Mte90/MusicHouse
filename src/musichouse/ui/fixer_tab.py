@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QMouseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -69,6 +69,11 @@ class FixerTab(QWidget):
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
+        # Fill handle state for drag-fill operation
+        self._fill_handle_active = False
+        self._fill_handle_start_row: int | None = None
+        self._fill_handle_current_row: int | None = None
+
         # Table widget - sorting DISABLED to prevent data corruption
         # When sorting is enabled, visual row indices don't match _files_data indices,
         # causing tags to be written to wrong files (critical bug)
@@ -92,6 +97,8 @@ class FixerTab(QWidget):
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellChanged.connect(self._on_cell_changed)
         self._table.setAlternatingRowColors(True)
+        # Install event filter for drag-fill handling
+        self._table.viewport().installEventFilter(self)
         # CRITICAL: Disable sorting to prevent row index mismatch bug
         self._table.setSortingEnabled(False)
         
@@ -871,6 +878,173 @@ class FixerTab(QWidget):
         if self._empty_label:
             self._empty_label.setVisible(not has_data)
     
+    def eventFilter(self, obj, event):
+        """Handle events for drag-fill on Artist column."""
+        from PyQt6.QtCore import QEvent
+        
+        if obj == self._table.viewport():
+            if event.type() == QEvent.Type.MouseButtonPress:
+                return self._handle_mouse_press(event)
+            elif event.type() == QEvent.Type.MouseMove:
+                return self._handle_mouse_move(event)
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                return self._handle_mouse_release(event)
+        
+        return super().eventFilter(obj, event)
+
+    def _handle_mouse_press(self, event: QMouseEvent) -> bool:
+        """Handle mouse press for fill handle detection."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+        
+        # Get the cell under the cursor
+        cell_rect = self._table.visualItemRect(self._table.itemAt(event.pos()))
+        if cell_rect.isNull():
+            return False
+        
+        # Check if we're in the Artist column (column 2)
+        item = self._table.itemAt(event.pos())
+        if item is None or item.column() != 2:
+            return False
+        
+        row = self._table.row(item)
+        
+        # Check if click is in bottom-right corner (fill handle area ~10x10px)
+        cell_rect = self._table.visualItemRect(item)
+        handle_rect = cell_rect.adjusted(cell_rect.width() - 10, cell_rect.height() - 10, 0, 0)
+        
+        if handle_rect.contains(event.pos()):
+            self._fill_handle_active = True
+            self._fill_handle_start_row = row
+            self._fill_handle_current_row = row
+            
+            # Highlight the source cell
+            self._highlight_fill_range(row, row)
+            return True
+        
+        return False
+
+    def _handle_mouse_move(self, event: QMouseEvent) -> bool:
+        """Handle mouse move during drag."""
+        if not self._fill_handle_active:
+            return False
+        
+        item = self._table.itemAt(event.pos())
+        if item is None or item.column() != 2:
+            return False
+        
+        row = self._table.row(item)
+        start_row = self._fill_handle_start_row
+        
+        if start_row is not None and row != self._fill_handle_current_row:
+            # Clamp row to valid range
+            row = max(0, min(row, self._table.rowCount() - 1))
+            self._fill_handle_current_row = row
+            
+            # Highlight the range
+            min_row = min(start_row, row)
+            max_row = max(start_row, row)
+            self._highlight_fill_range(min_row, max_row)
+        
+        return False
+
+    def _handle_mouse_release(self, event: QMouseEvent) -> bool:
+        """Handle mouse release to apply fill."""
+        if not self._fill_handle_active:
+            return False
+        
+        self._fill_handle_active = False
+        start_row = self._fill_handle_start_row
+        current_row = self._fill_handle_current_row
+        
+        # Clear highlighting
+        self._clear_fill_highlight()
+        
+        handled = False
+        if start_row is not None and current_row is not None and start_row != current_row:
+            # Apply the fill
+            min_row = min(start_row, current_row)
+            max_row = max(start_row, current_row)
+            source_artist = self._table.item(start_row, 2).text() if self._table.item(start_row, 2) else ""
+            
+            if source_artist:  # Only fill if source is not empty
+                self._apply_fill(start_row, min_row, max_row, source_artist)
+                handled = True
+        
+        self._fill_handle_start_row = None
+        self._fill_handle_current_row = None
+        
+        return handled
+
+    def _highlight_fill_range(self, start_row: int, end_row: int):
+        """Highlight the range of cells being filled."""
+        # Clear previous highlights
+        self._clear_fill_highlight()
+        
+        # Store original backgrounds
+        self._fill_original_bg: dict[int, QColor] = {}
+        
+        for row in range(start_row, end_row + 1):
+            item = self._table.item(row, 2)
+            if item:
+                self._fill_original_bg[row] = item.background().color()
+                # Apply highlight color
+                item.setBackground(QColor(255, 255, 200))  # Light yellow
+
+    def _clear_fill_highlight(self):
+        """Clear fill highlight and restore original backgrounds."""
+        if hasattr(self, '_fill_original_bg'):
+            for row, color in self._fill_original_bg.items():
+                item = self._table.item(row, 2)
+                if item:
+                    # Restore original color or clear if none
+                    if color.isValid() and color.alpha() > 0:
+                        item.setBackground(color)
+                    else:
+                        # Check if this row had red foreground (missing artist)
+                        data_idx = self._get_data_index_for_row(row)
+                        if data_idx is not None:
+                            entry = self._files_data[data_idx]
+                            if entry.get("missing_artist", False):
+                                item.setForeground(Qt.GlobalColor.red)
+            del self._fill_original_bg
+
+    def _apply_fill(self, source_row: int, min_row: int, max_row: int, artist_value: str):
+        """Apply the fill operation to the target rows."""
+        # Block signals to prevent multiple re-renders
+        self._table.blockSignals(True)
+        
+        try:
+            for row in range(min_row, max_row + 1):
+                if row == source_row:
+                    continue  # Skip source row
+                
+                # Update table cell
+                item = self._table.item(row, 2)
+                if item:
+                    item.setText(artist_value)
+                
+                # Update _files_data
+                data_idx = self._get_data_index_for_row(row)
+                if data_idx is not None and 0 <= data_idx < len(self._files_data):
+                    self._files_data[data_idx]["existing_artist"] = artist_value
+                    # Mark as no longer missing if we have a value
+                    if artist_value:
+                        self._files_data[data_idx]["missing_artist"] = False
+            
+            # Re-render affected rows
+            self._apply_filter()
+            
+        finally:
+            self._table.blockSignals(False)
+
+    def _get_data_index_for_row(self, row: int) -> int | None:
+        """Get the _files_data index for a visual row."""
+        checkbox_item = self._table.item(row, 0)
+        if checkbox_item:
+            return checkbox_item.data(Qt.ItemDataRole.UserRole)
+        return None
+
     def _on_search_changed(self, text: str):
         """Handle search input change with 150ms debounce."""
         self._search_timer.stop()

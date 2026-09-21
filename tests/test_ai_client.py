@@ -185,6 +185,177 @@ class TestGetArtistGenres:
 
 
 # ============================================================================
+# Test: Error handling paths
+# ============================================================================
+class TestErrorHandling:
+    """Tests for error handling in AIClient."""
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_http_error(self, mock_urlopen, ai_client_with_key):
+        """Test HTTP error handling (401, 403, 500, etc.)."""
+        import urllib.error
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            'http://localhost:8080', 401, 'Unauthorized', {}, None
+        )
+
+        with pytest.raises(APIConnectionError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_timeout_error(self, mock_urlopen, ai_client_with_key):
+        """Test timeout error handling."""
+        mock_urlopen.side_effect = TimeoutError("Request timed out")
+
+        with pytest.raises(APITimeoutError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_url_error(self, mock_urlopen, ai_client_with_key):
+        """Test URL error handling (connection refused, DNS failure)."""
+        import urllib.error
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+
+        with pytest.raises(APIConnectionError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_connection_refused(self, mock_urlopen, ai_client_with_key):
+        """Test connection refused error handling."""
+        mock_urlopen.side_effect = ConnectionRefusedError("Connection refused")
+
+        with pytest.raises(APIConnectionError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_connection_error(self, mock_urlopen, ai_client_with_key):
+        """Test connection error handling."""
+        mock_urlopen.side_effect = ConnectionError("Network error")
+
+        with pytest.raises(APIConnectionError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_os_error(self, mock_urlopen, ai_client_with_key):
+        """Test OS error handling."""
+        mock_urlopen.side_effect = OSError("Network unreachable")
+
+        with pytest.raises(APIConnectionError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_call_api_invalid_json(self, mock_urlopen, ai_client_with_key):
+        """Test invalid JSON error handling."""
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'not valid json'
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        with pytest.raises(APIParseError):
+            ai_client_with_key.get_similar_artists("Artist")
+
+
+# ============================================================================
+# Test: Validation errors in get_similar_artists_json
+# ============================================================================
+class TestSimilarArtistsJsonValidation:
+    """Tests for validation errors in get_similar_artists_json."""
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_response_not_list(self, mock_urlopen, ai_client_with_key):
+        """Test validation when API returns non-list response."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"not": "a list"}'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        with pytest.raises(TypeError):
+            ai_client_with_key.get_similar_artists_json("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_item_not_dict(self, mock_urlopen, ai_client_with_key):
+        """Test validation when list item is not a dict."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '["Artist A", "Artist B"]'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        with pytest.raises(TypeError):
+            ai_client_with_key.get_similar_artists_json("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_missing_artist_field(self, mock_urlopen, ai_client_with_key):
+        """Test validation when item missing artist field."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"reason": "No artist name"}]'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        with pytest.raises(ValueError):
+            ai_client_with_key.get_similar_artists_json("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_empty_artist_name(self, mock_urlopen, ai_client_with_key):
+        """Test validation when artist name is empty."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"artist": "", "reason": "Empty name"}]'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        with pytest.raises(ValueError):
+            ai_client_with_key.get_similar_artists_json("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_reason_not_string(self, mock_urlopen, ai_client_with_key):
+        """Test validation when reason is not a string."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"artist": "Artist A", "reason": 123}]'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        with pytest.raises(TypeError):
+            ai_client_with_key.get_similar_artists_json("Artist")
+
+
+# ============================================================================
 # Test: Fallback when API key not configured
 # ============================================================================
 class TestFallbackNoApiKey:
@@ -622,3 +793,134 @@ class TestAnalyzeFolderOrganization:
             result = ai_client_with_key.analyze_folder_organization(folder_structure, artist_genres)
             
             assert result == {"moves": [], "renames": []}
+
+
+# ============================================================================
+# Test: get_similar_artists_json validation edge cases
+# ============================================================================
+
+class TestSimilarArtistsJsonReasonValidation:
+    """Tests for reason field validation in get_similar_artists_json."""
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_reason_null(self, mock_urlopen, ai_client_with_key):
+        """Test validation when reason is null."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"artist": "Artist A", "reason": null}]'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        # null reason should raise TypeError (not a string)
+        with pytest.raises(TypeError, match="'reason' must be string"):
+            ai_client_with_key.get_similar_artists_json("Artist")
+
+    @patch('musichouse.ai_client.urllib.request.urlopen')
+    def test_get_similar_artists_json_reason_whitespace(self, mock_urlopen, ai_client_with_key):
+        """Test validation when reason is whitespace."""
+        mock_response = MagicMock()
+        api_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"artist": "Artist A", "reason": "   "}]'
+                    }
+                }
+            ]
+        }
+        mock_response.read.return_value = json.dumps(api_response).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = ai_client_with_key.get_similar_artists_json("Artist")
+        
+        # Whitespace reason should be stripped to empty string
+        assert result == [{"artist": "Artist A", "reason": ""}]
+
+
+# ============================================================================
+# Test: _extract_result fallback paths
+# ============================================================================
+def test_extract_result_invalid_json_raises_error(ai_client_no_key):
+    """Test _extract_result raises APIParseError on invalid JSON."""
+    mock_response = MagicMock()
+    mock_response.text = "This is not JSON at all"
+    
+    with patch.object(ai_client_no_key, '_call_api', return_value=mock_response), pytest.raises(APIParseError):
+        ai_client_no_key._extract_result(mock_response)
+
+
+def test_extract_result_object_then_array_fallback(ai_client_no_key):
+    """Test _extract_result tries object then array fallback."""
+    # Invalid object, valid array - but needs choices structure
+    # The response is already parsed dict, not raw text
+    mock_response = {
+        "choices": [{
+            "message": {
+                "content": 'Some text {invalid json} more text [{"artist": "Test"}]'
+            }
+        }]
+    }
+    
+    with patch.object(ai_client_no_key, '_call_api', return_value=mock_response):
+        result = ai_client_no_key._extract_result(mock_response)
+        assert result == [{"artist": "Test"}]
+
+
+def test_extract_result_key_error_raises(ai_client_no_key):
+    """Test _extract_result raises APIParseError on KeyError."""
+    mock_response = {"wrong_key": "value"}  # Missing choices
+    
+    with pytest.raises(APIParseError, match="no choices"):
+        ai_client_no_key._extract_result(mock_response)
+
+
+def test_extract_result_array_json_decode_error(ai_client_no_key):
+    """Test _extract_result handles array JSON decode error."""
+    # Valid choices, invalid object JSON, invalid array JSON
+    mock_response = {
+        "choices": [{
+            "message": {
+                "content": 'Some text {invalid} more text [also invalid]'
+            }
+        }]
+    }
+    
+    with pytest.raises(APIParseError, match="no valid JSON"):
+        ai_client_no_key._extract_result(mock_response)
+
+
+def test_extract_result_index_error_raises(ai_client_no_key):
+    """Test _extract_result raises APIParseError on IndexError."""
+    mock_response = {"choices": []}  # Empty choices
+    
+    with pytest.raises(APIParseError, match="no choices"):
+        ai_client_no_key._extract_result(mock_response)
+
+
+def test_extract_result_nested_key_error(ai_client_no_key):
+    """Test _extract_result raises APIParseError on nested KeyError."""
+    # Has choices but missing message or content
+    mock_response = {"choices": [{"wrong_key": "value"}]}
+    
+    with pytest.raises(APIParseError, match="Failed to parse"):
+        ai_client_no_key._extract_result(mock_response)
+
+
+# ============================================================================
+# Test: analyze_folder_organization edge cases
+# ============================================================================
+def test_analyze_folder_organization_wrong_type(ai_client_no_key):
+    """Test analyze_folder_organization handles wrong result type."""
+    mock_response = MagicMock()
+    mock_response.text = '["not", "a", "dict"]'  # Array instead of dict
+    
+    with patch.object(ai_client_no_key, '_call_api', return_value=mock_response):
+        result = ai_client_no_key.analyze_folder_organization({}, {})
+        assert result == {"moves": [], "renames": []}
